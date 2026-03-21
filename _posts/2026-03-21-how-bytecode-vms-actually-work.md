@@ -157,7 +157,7 @@ One dispatch instead of two. One fewer stack push and pop.
 OpGetLocalAddConst 0, 1   -- stack[base+0] + constant[1], push result
 ```
 
-Three dispatches become one. For fibonacci, this turns the hot inner loop from ~16 instructions to ~12.
+Three dispatches become one. For fibonacci, this reduces the recursive path from ~16 dispatches to ~12.
 
 The combined effect: **fib(25) went from 86ms to 80ms** (6% faster). Not dramatic, but these optimizations compound — and more importantly, they taught me *why* Lua is fast. Every optimization I made was a step toward what Lua's instruction set does by default.
 
@@ -184,7 +184,7 @@ Here's what Monkey compiles `fib` to (after optimizations):
 0027 OpReturnValue
 ```
 
-15 instructions. Each `OpCall` creates a new stack frame, adjusts the stack pointer, and enters a new function. Each `OpReturnValue` pops the frame and restores state. For `fib(25)`, that's 242,785 function calls. The VM's overhead per call determines the total runtime.
+14 instructions. Each `OpCall` creates a new stack frame, adjusts the stack pointer, and enters a new function. Each `OpReturnValue` pops the frame and restores state. For `fib(25)`, that's 242,785 function calls. The VM's overhead per call determines the total runtime.
 
 Compare the engines on my machine:
 
