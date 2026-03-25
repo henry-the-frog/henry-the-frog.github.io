@@ -684,6 +684,20 @@ var Monkey = (() => {
       return "`...`";
     }
   };
+  var IndexAssignExpression = class {
+    constructor(token, left, index, value) {
+      this.token = token;
+      this.left = left;
+      this.index = index;
+      this.value = value;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return `${this.left}[${this.index}] = ${this.value}`;
+    }
+  };
 
   // src/parser.js
   var Precedence = {
@@ -1069,6 +1083,12 @@ var Monkey = (() => {
       return new IndexExpression(token, left, index);
     }
     parseAssignExpression(left) {
+      if (left instanceof IndexExpression) {
+        const token2 = this.curToken;
+        this.nextToken();
+        const value2 = this.parseExpression(Precedence.LOWEST);
+        return new IndexAssignExpression(token2, left.left, left.index, value2);
+      }
       if (!(left instanceof Identifier)) {
         this.errors.push(`cannot assign to ${left.constructor.name}`);
         return null;
@@ -1079,10 +1099,6 @@ var Monkey = (() => {
       return new AssignExpression(token, left, value);
     }
     parseCompoundAssignExpression(left) {
-      if (!(left instanceof Identifier)) {
-        this.errors.push(`cannot compound-assign to ${left.constructor.name}`);
-        return null;
-      }
       const token = this.curToken;
       const opMap = {
         [TokenType.PLUS_ASSIGN]: TokenType.PLUS,
@@ -1094,9 +1110,17 @@ var Monkey = (() => {
       const opToken = new Token(opMap[token.type], token.literal[0]);
       this.nextToken();
       const right = this.parseExpression(Precedence.LOWEST);
-      const ident = left;
-      const binExpr = new InfixExpression(opToken, ident, opToken.literal, right);
-      return new AssignExpression(token, ident, binExpr);
+      if (left instanceof Identifier) {
+        const binExpr = new InfixExpression(opToken, left, opToken.literal, right);
+        return new AssignExpression(token, left, binExpr);
+      }
+      if (left instanceof IndexExpression) {
+        const readExpr = new IndexExpression(left.token, left.left, left.index);
+        const binExpr = new InfixExpression(opToken, readExpr, opToken.literal, right);
+        return new IndexAssignExpression(token, left.left, left.index, binExpr);
+      }
+      this.errors.push(`cannot compound-assign to ${left.constructor.name}`);
+      return null;
     }
     parseHashLiteral() {
       const token = this.curToken;
@@ -1213,7 +1237,11 @@ var Monkey = (() => {
     OpModConst: 49,
     OpModInt: 50,
     OpAnd: 51,
-    OpOr: 52
+    OpOr: 52,
+    OpSetFree: 53,
+    // Set free variable in closure
+    OpSetIndex: 54
+    // Set element at index: arr[i] = val
   };
   var definitions = {
     [Opcodes.OpConstant]: ["OpConstant", 2],
@@ -1267,7 +1295,9 @@ var Monkey = (() => {
     [Opcodes.OpModConst]: ["OpModConst", 2],
     [Opcodes.OpModInt]: ["OpModInt"],
     [Opcodes.OpAnd]: ["OpAnd"],
-    [Opcodes.OpOr]: ["OpOr"]
+    [Opcodes.OpOr]: ["OpOr"],
+    [Opcodes.OpSetFree]: ["OpSetFree", 1],
+    [Opcodes.OpSetIndex]: ["OpSetIndex"]
   };
   function lookup(op) {
     const def = definitions[op];
@@ -1901,9 +1931,20 @@ ${this.body}
         } else if (sym.scope === "LOCAL") {
           this.emit(Opcodes.OpSetLocal, sym.index);
           this.emit(Opcodes.OpGetLocal, sym.index);
+        } else if (sym.scope === "FREE") {
+          this.emit(Opcodes.OpSetFree, sym.index);
+          this.emit(Opcodes.OpGetFree, sym.index);
         } else {
           return `cannot assign to ${sym.scope} variable: ${node.name.value}`;
         }
+      } else if (node instanceof IndexAssignExpression) {
+        let err = this.compile(node.left);
+        if (err) return err;
+        err = this.compile(node.index);
+        if (err) return err;
+        err = this.compile(node.value);
+        if (err) return err;
+        this.emit(Opcodes.OpSetIndex);
       } else if (node instanceof BreakStatement) {
         if (this.loopStack.length === 0) return "break outside of loop";
         this.emit(Opcodes.OpNull);
@@ -6942,6 +6983,37 @@ ${this.body}
             }
             break;
           }
+          case Opcodes.OpSetFree: {
+            const freeIdx2 = ins[ip + 1];
+            frame.ip += 1;
+            frame.closure.free[freeIdx2] = this.pop();
+            if (recording()) {
+              this.recorder.abortTrace("OpSetFree not JIT-compiled");
+            }
+            break;
+          }
+          case Opcodes.OpSetIndex: {
+            const val = this.pop();
+            const index = this.pop();
+            const obj = this.pop();
+            if (obj instanceof MonkeyArray && index instanceof MonkeyInteger) {
+              let i = index.value;
+              if (i < 0) i += obj.elements.length;
+              if (i >= 0 && i < obj.elements.length) {
+                obj.elements[i] = val;
+              }
+            } else if (obj instanceof MonkeyHash) {
+              if (index.fastHashKey) {
+                obj.pairs.set(index.fastHashKey(), { key: index, value: val });
+              }
+            } else if (obj instanceof MonkeyString) {
+            }
+            this.push(val);
+            if (recording()) {
+              this.recorder.abortTrace("OpSetIndex not JIT-compiled");
+            }
+            break;
+          }
           case Opcodes.OpCurrentClosure:
             this.push(frame.closure);
             if (recording()) {
@@ -7737,6 +7809,22 @@ ${this.body}
       if (elements.length === 1 && isError(elements[0])) return elements[0];
       return new MonkeyArray(elements);
     }
+    if (node instanceof IndexAssignExpression) {
+      const obj = monkeyEval(node.left, env);
+      if (isError(obj)) return obj;
+      const index = monkeyEval(node.index, env);
+      if (isError(index)) return index;
+      const val = monkeyEval(node.value, env);
+      if (isError(val)) return val;
+      if (obj instanceof MonkeyArray && index instanceof MonkeyInteger) {
+        let i = index.value;
+        if (i < 0) i += obj.elements.length;
+        if (i >= 0 && i < obj.elements.length) {
+          obj.elements[i] = val;
+        }
+      }
+      return val;
+    }
     if (node instanceof IndexExpression) {
       const left = monkeyEval(node.left, env);
       if (isError(left)) return left;
@@ -7970,71 +8058,109 @@ ${this.body}
   var STDLIB_SOURCE = `
 let map = fn(arr, f) {
   let result = [];
-  let i = 0;
-  while (i < len(arr)) {
-    result = push(result, f(arr[i]));
-    i = i + 1;
-  }
+  for (x in arr) { result = push(result, f(x)); }
   result
 };
 
 let filter = fn(arr, f) {
   let result = [];
-  let i = 0;
-  while (i < len(arr)) {
-    if (f(arr[i])) {
-      result = push(result, arr[i]);
-    }
-    i = i + 1;
-  }
+  for (x in arr) { if (f(x)) { result = push(result, x); } }
   result
 };
 
 let reduce = fn(arr, initial, f) {
   let acc = initial;
-  let i = 0;
-  while (i < len(arr)) {
-    acc = f(acc, arr[i]);
-    i = i + 1;
-  }
+  for (x in arr) { acc = f(acc, x); }
   acc
 };
 
 let forEach = fn(arr, f) {
-  let i = 0;
-  while (i < len(arr)) {
-    f(arr[i]);
-    i = i + 1;
-  }
+  for (x in arr) { f(x); }
 };
 
 let range = fn(n) {
   let result = [];
-  let i = 0;
-  while (i < n) {
-    result = push(result, i);
-    i = i + 1;
-  }
+  for (let i = 0; i < n; i += 1) { result = push(result, i); }
   result
 };
 
 let contains = fn(arr, val) {
-  let i = 0;
-  while (i < len(arr)) {
-    if (arr[i] == val) { return true; }
-    i = i + 1;
-  }
+  for (x in arr) { if (x == val) { return true; } }
   false
 };
 
 let reverse = fn(arr) {
   let result = [];
-  let i = len(arr) - 1;
-  while (i > 0 - 1) {
+  for (let i = len(arr) - 1; i > 0 - 1; i -= 1) {
     result = push(result, arr[i]);
-    i = i - 1;
   }
   result
+};
+
+let sum = fn(arr) {
+  let total = 0;
+  for (x in arr) { total += x; }
+  total
+};
+
+let max = fn(arr) {
+  let m = arr[0];
+  for (let i = 1; i < len(arr); i += 1) {
+    if (arr[i] > m) { m = arr[i]; }
+  }
+  m
+};
+
+let min = fn(arr) {
+  let m = arr[0];
+  for (let i = 1; i < len(arr); i += 1) {
+    if (arr[i] < m) { m = arr[i]; }
+  }
+  m
+};
+
+let zip = fn(a, b) {
+  let result = [];
+  let n = len(a);
+  if (len(b) < n) { n = len(b); }
+  for (let i = 0; i < n; i += 1) {
+    result = push(result, [a[i], b[i]]);
+  }
+  result
+};
+
+let enumerate = fn(arr) {
+  let result = [];
+  for (let i = 0; i < len(arr); i += 1) {
+    result = push(result, [i, arr[i]]);
+  }
+  result
+};
+
+let flat = fn(arr) {
+  let result = [];
+  for (x in arr) {
+    if (type(x) == "ARRAY") {
+      for (y in x) { result = push(result, y); }
+    } else {
+      result = push(result, x);
+    }
+  }
+  result
+};
+
+let sort = fn(arr) {
+  let n = len(arr);
+  for (let i = 0; i < n; i += 1) {
+    for (let j = 0; j < n - i - 1; j += 1) {
+      if (arr[j] > arr[j + 1]) {
+        let temp = arr[j];
+        arr[j] = arr[j + 1];
+        arr[j + 1] = temp;
+      }
+    }
+  }
+  arr
 };
 `;
   function withStdlib(code) {
