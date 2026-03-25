@@ -109,6 +109,12 @@ var Monkey = (() => {
       while (this.ch === " " || this.ch === "	" || this.ch === "\n" || this.ch === "\r") {
         this.readChar();
       }
+      if (this.ch === "/" && this.peekChar() === "/") {
+        while (this.ch !== "\n" && this.ch !== "\0") {
+          this.readChar();
+        }
+        this.skipWhitespace();
+      }
     }
     readIdentifier() {
       const start = this.position;
@@ -1237,8 +1243,10 @@ ${this.body}
   }
 
   // src/compiler.js
+  var _cfId = 0;
   var CompiledFunction = class {
     constructor(instructions, numLocals = 0, numParameters = 0) {
+      this.id = _cfId++;
       this.instructions = instructions;
       this.numLocals = numLocals;
       this.numParameters = numParameters;
@@ -1863,6 +1871,8 @@ ${this.body}
     // ref: check this value is MonkeyArray
     GUARD_BOUNDS: "guard_bounds",
     // array: ref, index: ref → check 0 <= index < length
+    GUARD_CLOSURE: "guard_closure",
+    // ref: closureRef, fnId: expected → check closure.fn.id matches
     // Hash operations
     GUARD_HASH: "guard_hash",
     // ref: check this value is MonkeyHash
@@ -2111,6 +2121,10 @@ ${this.body}
     // Pop an IR ref from the virtual stack
     popRef() {
       return this.irStack.pop();
+    }
+    // Peek at an IR ref N positions from the top (0 = top)
+    peekRef(n = 0) {
+      return this.irStack[this.irStack.length - 1 - n];
     }
     // Record a guard for a value's type
     guardType(ref, value) {
@@ -3079,6 +3093,19 @@ ${this.body}
             }
             break;
           }
+          case IR.GUARD_CLOSURE: {
+            const closureRef = varNames.get(inst.operands.ref);
+            const fnId = inst.operands.fnId;
+            const exitIp = inst.operands.exitIp;
+            if (exitIp === -1) {
+              this.lines.push(`  if (${closureRef}.fn.id !== ${fnId}) {`);
+              this.lines.push(`    return { exit: "invalidate", guardIdx: ${i} };`);
+              this.lines.push(`  }`);
+            } else {
+              this._emitGuardExit(i, exitIp, `(${closureRef}.fn.id !== ${fnId})`);
+            }
+            break;
+          }
           case IR.INDEX_ARRAY: {
             const arr = varNames.get(inst.operands.left);
             const idx = varNames.get(inst.operands.right);
@@ -3994,7 +4021,8 @@ ${this.body}
         IR.GUARD_HASH,
         IR.GUARD_TRUTHY,
         IR.GUARD_FALSY,
-        IR.GUARD_BOUNDS
+        IR.GUARD_BOUNDS,
+        IR.GUARD_CLOSURE
       ]);
       const invariant = /* @__PURE__ */ new Set();
       const REF_KEYS = ["ref", "left", "right"];
@@ -4631,7 +4659,7 @@ ${this.body}
       for (let i = 0; i < ir.length; i++) {
         const inst = ir[i];
         if (!inst) continue;
-        if (inst.op === IR.STORE_LOCAL || inst.op === IR.STORE_GLOBAL || inst.op === IR.GUARD_INT || inst.op === IR.GUARD_BOOL || inst.op === IR.GUARD_STRING || inst.op === IR.GUARD_ARRAY || inst.op === IR.GUARD_HASH || inst.op === IR.GUARD_BOUNDS || inst.op === IR.GUARD_TRUTHY || inst.op === IR.GUARD_FALSY || inst.op === IR.LOOP_START || inst.op === IR.LOOP_END || inst.op === IR.CALL || inst.op === IR.EXEC_TRACE || inst.op === IR.SELF_CALL || inst.op === IR.FUNC_RETURN || inst.op === IR.BUILTIN_PUSH) {
+        if (inst.op === IR.STORE_LOCAL || inst.op === IR.STORE_GLOBAL || inst.op === IR.GUARD_INT || inst.op === IR.GUARD_BOOL || inst.op === IR.GUARD_STRING || inst.op === IR.GUARD_ARRAY || inst.op === IR.GUARD_HASH || inst.op === IR.GUARD_BOUNDS || inst.op === IR.GUARD_TRUTHY || inst.op === IR.GUARD_FALSY || inst.op === IR.GUARD_CLOSURE || inst.op === IR.LOOP_START || inst.op === IR.LOOP_END || inst.op === IR.CALL || inst.op === IR.EXEC_TRACE || inst.op === IR.SELF_CALL || inst.op === IR.FUNC_RETURN || inst.op === IR.BUILTIN_PUSH) {
           live.add(i);
         }
       }
@@ -6144,6 +6172,16 @@ ${this.body}
                 const rootBp = this.frames[this.recorder.startFrame - 1].basePointer;
                 const calleeBp = this.sp - numArgs;
                 const baseOffset = calleeBp - rootBp;
+                const closureRef = this.recorder.peekRef(numArgs);
+                if (closureRef !== void 0) {
+                  this.recorder.trace.addInst(IR.GUARD_CLOSURE, {
+                    ref: closureRef,
+                    fnId: callee.fn.id,
+                    exitIp: -1
+                    // Special: invalidate trace on mismatch
+                  });
+                  this.recorder.trace.guardCount++;
+                }
                 const argRefs = [];
                 for (let i = 0; i < numArgs; i++) {
                   argRefs.unshift(this.recorder.popRef());
@@ -6646,7 +6684,7 @@ ${this.body}
     }
     // Get a stable identity for the current closure (for trace keying)
     _closureId() {
-      return this.currentFrame().closure.fn;
+      return this.currentFrame().closure.fn.id;
     }
     // Execute a compiled trace, returns true if trace ran (even if it exited)
     _executeTrace(trace) {
@@ -6703,6 +6741,15 @@ ${this.body}
             }
             return true;
           case "loop_back":
+            return true;
+          case "invalidate":
+            for (const [key, t] of this.jit.traces) {
+              if (t === trace) {
+                this.jit.traces.delete(key);
+                break;
+              }
+            }
+            frame.ip = trace.startIp - 1;
             return true;
           case "max_iter":
             frame.ip = trace.startIp - 1;
