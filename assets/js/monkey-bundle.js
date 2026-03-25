@@ -148,22 +148,76 @@ var Monkey = (() => {
       return this.input.slice(start, this.position);
     }
     readString() {
-      const start = this.position + 1;
       this.readChar();
+      let str = "";
       while (this.ch !== null && this.ch !== '"') {
+        if (this.ch === "\\") {
+          this.readChar();
+          switch (this.ch) {
+            case "n":
+              str += "\n";
+              break;
+            case "t":
+              str += "	";
+              break;
+            case "r":
+              str += "\r";
+              break;
+            case "\\":
+              str += "\\";
+              break;
+            case '"':
+              str += '"';
+              break;
+            case "0":
+              str += "\0";
+              break;
+            default:
+              str += "\\" + this.ch;
+              break;
+          }
+        } else {
+          str += this.ch;
+        }
         this.readChar();
       }
-      const str = this.input.slice(start, this.position);
       this.readChar();
       return str;
     }
     readTemplateString() {
-      const start = this.position + 1;
       this.readChar();
+      let str = "";
       while (this.ch !== null && this.ch !== "`") {
+        if (this.ch === "\\") {
+          this.readChar();
+          switch (this.ch) {
+            case "n":
+              str += "\n";
+              break;
+            case "t":
+              str += "	";
+              break;
+            case "r":
+              str += "\r";
+              break;
+            case "\\":
+              str += "\\";
+              break;
+            case "`":
+              str += "`";
+              break;
+            case "$":
+              str += "$";
+              break;
+            default:
+              str += "\\" + this.ch;
+              break;
+          }
+        } else {
+          str += this.ch;
+        }
         this.readChar();
       }
-      const str = this.input.slice(start, this.position);
       this.readChar();
       return str;
     }
