@@ -225,6 +225,59 @@ let double = fn(x) { x * 2 };
 apply(double, 5);  // 10
 ```
 
+
+
+## Match Expression
+
+```
+let day = fn(n) {
+  match (n) {
+    1 => "Monday",
+    2 => "Tuesday",
+    3 => "Wednesday",
+    _ => "Other"
+  }
+};
+```
+
+Matches the subject against each arm's pattern using `==`. `_` is a wildcard that always matches.
+
+## Array Destructuring
+
+```
+let [a, b, c] = [1, 2, 3];
+let [first, _, last] = [10, 20, 30];  // skip with _
+let [x, y] = swap(1, 2);  // from function returns
+
+// In for-in loops
+for ([key, val] in pairs) {
+  puts(`${key}: ${val}`);
+}
+```
+
+## Do-While Loop
+
+```
+let i = 0;
+do {
+  puts(str(i));
+  i++;
+} while (i < 5);
+```
+
+Body executes at least once.
+
+## Postfix Increment/Decrement
+
+```
+let i = 0;
+i++;   // i = 1
+i--;   // i = 0
+
+for (let i = 0; i < 10; i++) { ... }
+```
+
+
 ## Builtins
 
 ### Core
