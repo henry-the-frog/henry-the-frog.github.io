@@ -59,6 +59,8 @@ var Monkey = (() => {
     NOT_EQ: "!=",
     PLUS_ASSIGN: "+=",
     MINUS_ASSIGN: "-=",
+    PLUS_PLUS: "++",
+    MINUS_MINUS: "--",
     ASTERISK_ASSIGN: "*=",
     SLASH_ASSIGN: "/=",
     PERCENT_ASSIGN: "%=",
@@ -241,6 +243,9 @@ var Monkey = (() => {
           if (this.peekChar() === "=") {
             this.readChar();
             tok = new Token(TokenType.PLUS_ASSIGN, "+=");
+          } else if (this.peekChar() === "+") {
+            this.readChar();
+            tok = new Token(TokenType.PLUS_PLUS, "++");
           } else {
             tok = new Token(TokenType.PLUS, "+");
           }
@@ -249,6 +254,9 @@ var Monkey = (() => {
           if (this.peekChar() === "=") {
             this.readChar();
             tok = new Token(TokenType.MINUS_ASSIGN, "-=");
+          } else if (this.peekChar() === "-") {
+            this.readChar();
+            tok = new Token(TokenType.MINUS_MINUS, "--");
           } else {
             tok = new Token(TokenType.MINUS, "-");
           }
@@ -777,6 +785,9 @@ var Monkey = (() => {
     [TokenType.SLASH_ASSIGN]: Precedence.ASSIGN,
     [TokenType.PERCENT_ASSIGN]: Precedence.ASSIGN,
     [TokenType.QUESTION]: Precedence.OR,
+    [TokenType.PLUS_PLUS]: Precedence.CALL,
+    // postfix, high precedence
+    [TokenType.MINUS_MINUS]: Precedence.CALL,
     // ternary has same precedence as OR
     [TokenType.EQ]: Precedence.EQUALS,
     [TokenType.NOT_EQ]: Precedence.EQUALS,
@@ -841,6 +852,8 @@ var Monkey = (() => {
       this.registerInfix(TokenType.LBRACKET, (left) => this.parseIndexExpression(left));
       this.registerInfix(TokenType.ASSIGN, (left) => this.parseAssignExpression(left));
       this.registerInfix(TokenType.QUESTION, (left) => this.parseTernaryExpression(left));
+      this.registerInfix(TokenType.PLUS_PLUS, (left) => this.parsePostfixExpression(left, "+"));
+      this.registerInfix(TokenType.MINUS_MINUS, (left) => this.parsePostfixExpression(left, "-"));
       for (const op of [
         TokenType.PLUS_ASSIGN,
         TokenType.MINUS_ASSIGN,
@@ -1173,6 +1186,17 @@ var Monkey = (() => {
       }
       if (!this.expectPeek(TokenType.RBRACKET)) return null;
       return new IndexExpression(token, left, index);
+    }
+    parsePostfixExpression(left, op) {
+      if (!(left instanceof Identifier)) {
+        this.errors.push(`cannot use ${op}${op} on ${left.constructor.name}`);
+        return null;
+      }
+      const token = this.curToken;
+      const opType = op === "+" ? TokenType.PLUS : TokenType.MINUS;
+      const one = new IntegerLiteral(token, 1);
+      const binExpr = new InfixExpression(new Token(opType, op), left, op, one);
+      return new AssignExpression(token, left, binExpr);
     }
     parseTernaryExpression(condition) {
       const token = this.curToken;
@@ -1753,7 +1777,7 @@ ${this.body}
       this.intStackDepth = 0;
     }
   };
-  var BUILTINS = ["len", "puts", "first", "last", "rest", "push", "split", "join", "trim", "str_contains", "substr", "replace", "int", "str", "type", "upper", "lower", "indexOf", "startsWith", "endsWith", "char", "ord"];
+  var BUILTINS = ["len", "puts", "first", "last", "rest", "push", "split", "join", "trim", "str_contains", "substr", "replace", "int", "str", "type", "upper", "lower", "indexOf", "startsWith", "endsWith", "char", "ord", "keys", "values", "abs"];
   var Compiler = class _Compiler {
     constructor(symbolTable = null, constants = null) {
       this.constants = constants || [];
@@ -6434,6 +6458,32 @@ ${this.body}
       if (args.length !== 1 || !(args[0] instanceof MonkeyString))
         return new MonkeyError(`argument to \`ord\` must be STRING`);
       return cachedInteger(args[0].value.charCodeAt(0));
+    }),
+    // keys — get hash keys as array
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || !(args[0] instanceof MonkeyHash))
+        return new MonkeyError(`argument to \`keys\` must be HASH`);
+      const keys = [];
+      for (const [, pair] of args[0].pairs) {
+        keys.push(pair.key);
+      }
+      return new MonkeyArray(keys);
+    }),
+    // values — get hash values as array
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || !(args[0] instanceof MonkeyHash))
+        return new MonkeyError(`argument to \`values\` must be HASH`);
+      const values = [];
+      for (const [, pair] of args[0].pairs) {
+        values.push(pair.value);
+      }
+      return new MonkeyArray(values);
+    }),
+    // abs — absolute value
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || !(args[0] instanceof MonkeyInteger))
+        return new MonkeyError(`argument to \`abs\` must be INTEGER`);
+      return cachedInteger(Math.abs(args[0].value));
     })
   ];
   var VM = class _VM {
@@ -7028,6 +7078,9 @@ ${this.body}
                 }
                 this.recorder.popRef();
                 if (!this.recorder.enterInlineFrame(baseOffset, callee.fn.numLocals, ip)) {
+                  this._abortRecording();
+                } else if (this._hasBackwardJump(callee.fn.instructions)) {
+                  this.recorder.leaveInlineFrame();
                   this._abortRecording();
                 } else {
                   for (let i = 0; i < numArgs; i++) {
@@ -7644,6 +7697,17 @@ ${this.body}
       return this.constants.length + idx;
     }
     // Get a stable identity for the current closure (for trace keying)
+    _hasBackwardJump(instructions) {
+      const OpJump = Opcodes.OpJump;
+      for (let i = 0; i < instructions.length - 2; i++) {
+        if (instructions[i] === OpJump) {
+          const target = instructions[i + 1] << 8 | instructions[i + 2];
+          if (target <= i) return true;
+          i += 2;
+        }
+      }
+      return false;
+    }
     _closureId() {
       return this.currentFrame().closure.fn.id;
     }
