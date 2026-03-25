@@ -48,6 +48,8 @@ var Monkey = (() => {
     PERCENT: "%",
     LT: "<",
     GT: ">",
+    LT_EQ: "<=",
+    GT_EQ: ">=",
     EQ: "==",
     NOT_EQ: "!=",
     // Delimiters
@@ -176,10 +178,20 @@ var Monkey = (() => {
           tok = new Token(TokenType.PERCENT, "%");
           break;
         case "<":
-          tok = new Token(TokenType.LT, "<");
+          if (this.peekChar() === "=") {
+            this.readChar();
+            tok = new Token(TokenType.LT_EQ, "<=");
+          } else {
+            tok = new Token(TokenType.LT, "<");
+          }
           break;
         case ">":
-          tok = new Token(TokenType.GT, ">");
+          if (this.peekChar() === "=") {
+            this.readChar();
+            tok = new Token(TokenType.GT_EQ, ">=");
+          } else {
+            tok = new Token(TokenType.GT, ">");
+          }
           break;
         case ",":
           tok = new Token(TokenType.COMMA, ",");
@@ -514,6 +526,8 @@ var Monkey = (() => {
     [TokenType.NOT_EQ]: Precedence.EQUALS,
     [TokenType.LT]: Precedence.LESSGREATER,
     [TokenType.GT]: Precedence.LESSGREATER,
+    [TokenType.LT_EQ]: Precedence.LESSGREATER,
+    [TokenType.GT_EQ]: Precedence.LESSGREATER,
     [TokenType.PLUS]: Precedence.SUM,
     [TokenType.MINUS]: Precedence.SUM,
     [TokenType.SLASH]: Precedence.PRODUCT,
@@ -6128,6 +6142,13 @@ ${this.body}
               if (!index.fastHashKey) throw new Error(`unusable as hash key: ${index.type()}`);
               const pair = left3.pairs.get(index.fastHashKey());
               this.push(pair ? pair.value : NULL);
+            } else if (left3 instanceof MonkeyString && index instanceof MonkeyInteger) {
+              const i = index.value;
+              if (i < 0 || i >= left3.value.length) {
+                this.push(NULL);
+              } else {
+                this.push(new MonkeyString(left3.value[i]));
+              }
             } else {
               throw new Error(`index operator not supported: ${left3.type()}`);
             }
@@ -7307,6 +7328,11 @@ ${this.body}
       const pair = left.pairs.get(index.fastHashKey());
       if (!pair) return NULL;
       return pair.value;
+    }
+    if (left.type() === OBJ.STRING && index instanceof MonkeyInteger) {
+      const idx = index.value;
+      if (idx < 0 || idx >= left.value.length) return NULL;
+      return new MonkeyString(left.value[idx]);
     }
     return newError(`index operator not supported: ${left.type()}`);
   }
