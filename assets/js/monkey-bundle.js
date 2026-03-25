@@ -1153,6 +1153,35 @@ var Monkey = (() => {
         const body2 = this.parseBlockStatement();
         return new ForInExpression(token, varName, iterable, body2);
       }
+      if (this.curTokenIs(TokenType.LBRACKET)) {
+        const names = [];
+        if (!this.peekTokenIs(TokenType.RBRACKET)) {
+          this.nextToken();
+          names.push(this.curToken.literal);
+          while (this.peekTokenIs(TokenType.COMMA)) {
+            this.nextToken();
+            this.nextToken();
+            names.push(this.curToken.literal);
+          }
+        }
+        if (!this.expectPeek(TokenType.RBRACKET)) return null;
+        this.nextToken();
+        if (!(this.curTokenIs(TokenType.IDENT) && this.curToken.literal === "in")) {
+          this.errors.push('expected "in" after destructuring pattern');
+          return null;
+        }
+        this.nextToken();
+        const iterable = this.parseExpression(Precedence.LOWEST);
+        if (!this.expectPeek(TokenType.RPAREN)) return null;
+        if (!this.expectPeek(TokenType.LBRACE)) return null;
+        const body2 = this.parseBlockStatement();
+        const tempVar = "__forin_dest_" + token.literal;
+        const destBody = new BlockStatement(token, [
+          new DestructuringLet(token, names.map((n) => n === "_" ? null : new Identifier(token, n)), new Identifier(token, tempVar)),
+          ...body2.statements
+        ]);
+        return new ForInExpression(token, tempVar, iterable, destBody);
+      }
       let init;
       if (this.curTokenIs(TokenType.LET)) {
         init = this.parseLetStatement();
@@ -8660,9 +8689,13 @@ let forEach = fn(arr, f) {
   for (x in arr) { f(x); }
 };
 
-let range = fn(n) {
+let range = fn(a, b = null) {
   let result = [];
-  for (let i = 0; i < n; i += 1) { result = push(result, i); }
+  if (b == null) {
+    for (let i = 0; i < a; i += 1) { result = push(result, i); }
+  } else {
+    for (let i = a; i < b; i += 1) { result = push(result, i); }
+  }
   result
 };
 
