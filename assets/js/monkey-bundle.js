@@ -88,6 +88,9 @@ var Monkey = (() => {
     BREAK: "BREAK",
     CONTINUE: "CONTINUE",
     NULL_LIT: "NULL_LIT",
+    MATCH: "MATCH",
+    ARROW: "=>",
+    UNDERSCORE: "_",
     // Special
     EOF: "EOF",
     ILLEGAL: "ILLEGAL"
@@ -104,7 +107,8 @@ var Monkey = (() => {
     for: TokenType.FOR,
     break: TokenType.BREAK,
     continue: TokenType.CONTINUE,
-    null: TokenType.NULL_LIT
+    null: TokenType.NULL_LIT,
+    match: TokenType.MATCH
   };
   var Token = class {
     constructor(type, literal) {
@@ -235,6 +239,9 @@ var Monkey = (() => {
           if (this.peekChar() === "=") {
             this.readChar();
             tok = new Token(TokenType.EQ, "==");
+          } else if (this.peekChar() === ">") {
+            this.readChar();
+            tok = new Token(TokenType.ARROW, "=>");
           } else {
             tok = new Token(TokenType.ASSIGN, "=");
           }
@@ -752,6 +759,32 @@ var Monkey = (() => {
       return `${this.condition} ? ${this.consequence} : ${this.alternative}`;
     }
   };
+  var MatchExpression = class {
+    constructor(token, subject, arms) {
+      this.token = token;
+      this.subject = subject;
+      this.arms = arms;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return "match { ... }";
+    }
+  };
+  var DestructuringLet = class {
+    constructor(token, names, value) {
+      this.token = token;
+      this.names = names;
+      this.value = value;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return `let [${this.names.map((n) => n ? n.value : "_").join(", ")}] = ...`;
+    }
+  };
 
   // src/parser.js
   var Precedence = {
@@ -831,6 +864,7 @@ var Monkey = (() => {
       this.registerPrefix(TokenType.BREAK, () => new BreakStatement(this.curToken));
       this.registerPrefix(TokenType.CONTINUE, () => new ContinueStatement(this.curToken));
       this.registerPrefix(TokenType.NULL_LIT, () => new NullLiteral(this.curToken));
+      this.registerPrefix(TokenType.MATCH, () => this.parseMatchExpression());
       for (const op of [
         TokenType.PLUS,
         TokenType.MINUS,
@@ -922,6 +956,9 @@ var Monkey = (() => {
     }
     parseLetStatement() {
       const token = this.curToken;
+      if (this.peekTokenIs(TokenType.LBRACKET)) {
+        return this.parseDestructuringLet(token);
+      }
       if (!this.expectPeek(TokenType.IDENT)) return null;
       const name = new Identifier(this.curToken, this.curToken.literal);
       if (!this.expectPeek(TokenType.ASSIGN)) return null;
@@ -929,6 +966,29 @@ var Monkey = (() => {
       const value = this.parseExpression(Precedence.LOWEST);
       if (this.peekTokenIs(TokenType.SEMICOLON)) this.nextToken();
       return new LetStatement(token, name, value);
+    }
+    parseDestructuringLet(token) {
+      this.nextToken();
+      const names = [];
+      if (!this.peekTokenIs(TokenType.RBRACKET)) {
+        this.nextToken();
+        names.push(new Identifier(this.curToken, this.curToken.literal));
+        while (this.peekTokenIs(TokenType.COMMA)) {
+          this.nextToken();
+          this.nextToken();
+          if (this.curTokenIs(TokenType.IDENT) && this.curToken.literal === "_") {
+            names.push(null);
+          } else {
+            names.push(new Identifier(this.curToken, this.curToken.literal));
+          }
+        }
+      }
+      if (!this.expectPeek(TokenType.RBRACKET)) return null;
+      if (!this.expectPeek(TokenType.ASSIGN)) return null;
+      this.nextToken();
+      const value = this.parseExpression(Precedence.LOWEST);
+      if (this.peekTokenIs(TokenType.SEMICOLON)) this.nextToken();
+      return new DestructuringLet(token, names, value);
     }
     parseReturnStatement() {
       const token = this.curToken;
@@ -1186,6 +1246,31 @@ var Monkey = (() => {
       }
       if (!this.expectPeek(TokenType.RBRACKET)) return null;
       return new IndexExpression(token, left, index);
+    }
+    parseMatchExpression() {
+      const token = this.curToken;
+      if (!this.expectPeek(TokenType.LPAREN)) return null;
+      this.nextToken();
+      const subject = this.parseExpression(Precedence.LOWEST);
+      if (!this.expectPeek(TokenType.RPAREN)) return null;
+      if (!this.expectPeek(TokenType.LBRACE)) return null;
+      const arms = [];
+      while (!this.peekTokenIs(TokenType.RBRACE) && !this.peekTokenIs(TokenType.EOF)) {
+        this.nextToken();
+        let pattern = null;
+        if (this.curTokenIs(TokenType.IDENT) && this.curToken.literal === "_") {
+          pattern = null;
+        } else {
+          pattern = this.parseExpression(Precedence.LOWEST);
+        }
+        if (!this.expectPeek(TokenType.ARROW)) return null;
+        this.nextToken();
+        const value = this.parseExpression(Precedence.LOWEST);
+        arms.push({ pattern, value });
+        if (this.peekTokenIs(TokenType.COMMA)) this.nextToken();
+      }
+      if (!this.expectPeek(TokenType.RBRACE)) return null;
+      return new MatchExpression(token, subject, arms);
     }
     parsePostfixExpression(left, op) {
       if (!(left instanceof Identifier)) {
@@ -1866,6 +1951,20 @@ ${this.body}
         if (err) return err;
         const op = sym.scope === SCOPE.GLOBAL ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal;
         this.emit(op, sym.index);
+      } else if (node instanceof DestructuringLet) {
+        const err2 = this.compile(node.value);
+        if (err2) return err2;
+        const tempSym = this.symbolTable.define("__destruct_" + this.currentInstructions().length);
+        this.emit(tempSym.scope === SCOPE.GLOBAL ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal, tempSym.index);
+        for (let i = 0; i < node.names.length; i++) {
+          if (node.names[i] === null) continue;
+          this.loadSymbol(tempSym);
+          const idxConst = this.addConstant(new MonkeyInteger(i));
+          this.emit(Opcodes.OpConstant, idxConst);
+          this.emit(Opcodes.OpIndex);
+          const dsym = this.symbolTable.define(node.names[i].value);
+          this.emit(dsym.scope === SCOPE.GLOBAL ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal, dsym.index);
+        }
       } else if (node instanceof ReturnStatement) {
         const err = this.compile(node.returnValue);
         if (err) return err;
@@ -2049,6 +2148,8 @@ ${this.body}
         err = this.compile(node.alternative);
         if (err) return err;
         this.changeOperand(jumpPos, this.currentInstructions().length);
+      } else if (node instanceof MatchExpression) {
+        return this.compileMatchExpression(node);
       } else if (node instanceof TemplateLiteral) {
         return this.compileTemplateLiteral(node);
       } else if (node instanceof BooleanLiteral) {
@@ -2311,6 +2412,39 @@ ${this.body}
       const err = this.compile(part);
       if (err) return err;
       this.emit(Opcodes.OpCall, 1);
+      return null;
+    }
+    compileMatchExpression(node) {
+      let err = this.compile(node.subject);
+      if (err) return err;
+      const subjectSym = this.symbolTable.define("__match_" + this.currentInstructions().length);
+      this.emit(subjectSym.scope === "GLOBAL" ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal, subjectSym.index);
+      const endJumps = [];
+      for (let i = 0; i < node.arms.length; i++) {
+        const arm = node.arms[i];
+        if (arm.pattern === null) {
+          err = this.compile(arm.value);
+          if (err) return err;
+          break;
+        }
+        this.loadSymbol(subjectSym);
+        err = this.compile(arm.pattern);
+        if (err) return err;
+        this.emit(Opcodes.OpEqual);
+        const jumpNotTruthyPos = this.emit(Opcodes.OpJumpNotTruthy, 9999);
+        err = this.compile(arm.value);
+        if (err) return err;
+        endJumps.push(this.emit(Opcodes.OpJump, 9999));
+        this.changeOperand(jumpNotTruthyPos, this.currentInstructions().length);
+      }
+      const lastArm = node.arms[node.arms.length - 1];
+      if (lastArm.pattern !== null) {
+        this.emit(Opcodes.OpNull);
+      }
+      const end = this.currentInstructions().length;
+      for (const pos of endJumps) {
+        this.changeOperand(pos, end);
+      }
       return null;
     }
     compileFunctionLiteral(node) {
@@ -8134,6 +8268,18 @@ ${this.body}
       env.set(node.name.value, val);
       return void 0;
     }
+    if (node instanceof DestructuringLet) {
+      const val = monkeyEval(node.value, env);
+      if (isError(val)) return val;
+      if (val instanceof MonkeyArray) {
+        for (let i = 0; i < node.names.length; i++) {
+          if (node.names[i]) {
+            env.set(node.names[i].value, i < val.elements.length ? val.elements[i] : NULL);
+          }
+        }
+      }
+      return void 0;
+    }
     if (node instanceof ReturnStatement) {
       const val = monkeyEval(node.returnValue, env);
       if (isError(val)) return val;
@@ -8165,6 +8311,21 @@ ${this.body}
       const condition = monkeyEval(node.condition, env);
       if (isError(condition)) return condition;
       return isTruthy(condition) ? monkeyEval(node.consequence, env) : monkeyEval(node.alternative, env);
+    }
+    if (node instanceof MatchExpression) {
+      const subject = monkeyEval(node.subject, env);
+      if (isError(subject)) return subject;
+      for (const arm of node.arms) {
+        if (arm.pattern === null) {
+          return monkeyEval(arm.value, env);
+        }
+        const pattern = monkeyEval(arm.pattern, env);
+        if (isError(pattern)) return pattern;
+        if (subject.inspect() === pattern.inspect()) {
+          return monkeyEval(arm.value, env);
+        }
+      }
+      return NULL;
     }
     if (node instanceof TemplateLiteral) return evalTemplateLiteral(node, env);
     if (node instanceof AssignExpression) {
@@ -8291,6 +8452,13 @@ ${this.body}
     }
     if (left.type() === OBJ.STRING && right.type() === OBJ.STRING) {
       if (op === "+") return new MonkeyString(left.value + right.value);
+      if (op === "*") return left;
+      if (op === "==") return nativeBoolToBooleanObject(left.value === right.value);
+      if (op === "!=") return nativeBoolToBooleanObject(left.value !== right.value);
+      if (op === "<") return nativeBoolToBooleanObject(left.value < right.value);
+      if (op === ">") return nativeBoolToBooleanObject(left.value > right.value);
+      if (op === "<=") return nativeBoolToBooleanObject(left.value <= right.value);
+      if (op === ">=") return nativeBoolToBooleanObject(left.value >= right.value);
       return newError(`unknown operator: ${left.type()} ${op} ${right.type()}`);
     }
     if (op === "==") return nativeBoolToBooleanObject(left === right);
