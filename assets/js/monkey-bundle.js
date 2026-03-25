@@ -27,6 +27,7 @@ var Monkey = (() => {
     NULL: () => NULL,
     Parser: () => Parser,
     STDLIB_SOURCE: () => STDLIB_SOURCE,
+    Transpiler: () => Transpiler,
     VM: () => VM,
     monkeyEval: () => monkeyEval,
     withStdlib: () => withStdlib
@@ -1752,7 +1753,7 @@ ${this.body}
       this.intStackDepth = 0;
     }
   };
-  var BUILTINS = ["len", "puts", "first", "last", "rest", "push", "split", "join", "trim", "str_contains", "substr", "replace", "int", "str", "type"];
+  var BUILTINS = ["len", "puts", "first", "last", "rest", "push", "split", "join", "trim", "str_contains", "substr", "replace", "int", "str", "type", "upper", "lower", "indexOf", "startsWith", "endsWith", "char", "ord"];
   var Compiler = class _Compiler {
     constructor(symbolTable = null, constants = null) {
       this.constants = constants || [];
@@ -6383,6 +6384,56 @@ ${this.body}
     new MonkeyBuiltin((...args) => {
       if (args.length !== 1) return new MonkeyError(`wrong number of arguments. got=${args.length}, want=1`);
       return new MonkeyString(args[0].type());
+    }),
+    // upper
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || !(args[0] instanceof MonkeyString))
+        return new MonkeyError(`argument to \`upper\` must be STRING`);
+      return new MonkeyString(args[0].value.toUpperCase());
+    }),
+    // lower
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || !(args[0] instanceof MonkeyString))
+        return new MonkeyError(`argument to \`lower\` must be STRING`);
+      return new MonkeyString(args[0].value.toLowerCase());
+    }),
+    // indexOf
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 2) return new MonkeyError(`wrong number of arguments. got=${args.length}, want=2`);
+      if (args[0] instanceof MonkeyString && args[1] instanceof MonkeyString) {
+        return cachedInteger(args[0].value.indexOf(args[1].value));
+      }
+      if (args[0] instanceof MonkeyArray) {
+        for (let i = 0; i < args[0].elements.length; i++) {
+          if (args[0].elements[i].inspect() === args[1].inspect()) return cachedInteger(i);
+        }
+        return cachedInteger(-1);
+      }
+      return new MonkeyError(`first argument to \`indexOf\` must be STRING or ARRAY`);
+    }),
+    // startsWith
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 2 || !(args[0] instanceof MonkeyString) || !(args[1] instanceof MonkeyString))
+        return new MonkeyError(`arguments to \`startsWith\` must be (STRING, STRING)`);
+      return args[0].value.startsWith(args[1].value) ? TRUE : FALSE;
+    }),
+    // endsWith
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 2 || !(args[0] instanceof MonkeyString) || !(args[1] instanceof MonkeyString))
+        return new MonkeyError(`arguments to \`endsWith\` must be (STRING, STRING)`);
+      return args[0].value.endsWith(args[1].value) ? TRUE : FALSE;
+    }),
+    // char — convert integer to single character
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || !(args[0] instanceof MonkeyInteger))
+        return new MonkeyError(`argument to \`char\` must be INTEGER`);
+      return new MonkeyString(String.fromCharCode(args[0].value));
+    }),
+    // ord — convert single character to integer
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || !(args[0] instanceof MonkeyString))
+        return new MonkeyError(`argument to \`ord\` must be STRING`);
+      return cachedInteger(args[0].value.charCodeAt(0));
     })
   ];
   var VM = class _VM {
@@ -6561,7 +6612,7 @@ ${this.body}
               if (recording()) {
                 this.recorder.popRef();
                 this.recorder.popRef();
-                this.recorder.abortTrace("string multiplication not JIT-compiled");
+                this.recorder.abort("string multiplication not JIT-compiled");
               }
               const n = right.value;
               this.push(new MonkeyString(n > 0 ? left.value.repeat(n) : ""));
@@ -6569,7 +6620,7 @@ ${this.body}
               if (recording()) {
                 this.recorder.popRef();
                 this.recorder.popRef();
-                this.recorder.abortTrace("string multiplication not JIT-compiled");
+                this.recorder.abort("string multiplication not JIT-compiled");
               }
               const n = left.value;
               this.push(new MonkeyString(n > 0 ? right.value.repeat(n) : ""));
@@ -7171,7 +7222,7 @@ ${this.body}
             frame.ip += 1;
             frame.closure.free[freeIdx2] = this.pop();
             if (recording()) {
-              this.recorder.abortTrace("OpSetFree not JIT-compiled");
+              this.recorder.abort("OpSetFree not JIT-compiled");
             }
             break;
           }
@@ -7192,7 +7243,7 @@ ${this.body}
             }
             this.push(val);
             if (recording()) {
-              this.recorder.abortTrace("OpSetIndex not JIT-compiled");
+              this.recorder.abort("OpSetIndex not JIT-compiled");
             }
             break;
           }
@@ -7222,7 +7273,7 @@ ${this.body}
               this.push(NULL);
             }
             if (recording()) {
-              this.recorder.abortTrace("OpSlice not JIT-compiled");
+              this.recorder.abort("OpSlice not JIT-compiled");
             }
             break;
           }
@@ -7310,14 +7361,14 @@ ${this.body}
             } else if (left4 instanceof MonkeyString && right4 instanceof MonkeyInteger && op === Opcodes.OpMulConst) {
               if (recording()) {
                 this.recorder.popRef();
-                this.recorder.abortTrace("string multiplication not JIT-compiled");
+                this.recorder.abort("string multiplication not JIT-compiled");
               }
               const n = right4.value;
               this.push(new MonkeyString(n > 0 ? left4.value.repeat(n) : ""));
             } else if (left4 instanceof MonkeyInteger && right4 instanceof MonkeyString && op === Opcodes.OpMulConst) {
               if (recording()) {
                 this.recorder.popRef();
-                this.recorder.abortTrace("string multiplication not JIT-compiled");
+                this.recorder.abort("string multiplication not JIT-compiled");
               }
               const n = left4.value;
               this.push(new MonkeyString(n > 0 ? right4.value.repeat(n) : ""));
@@ -7522,6 +7573,53 @@ ${this.body}
               this.recorder.recordComparison(op, l, r);
             }
             this.stack[this.sp++] = l.value !== r.value ? TRUE : FALSE;
+            break;
+          }
+          case Opcodes.OpSetFree: {
+            const fIdx = ins[ip + 1];
+            frame.ip += 1;
+            frame.closure.free[fIdx] = this.stack[--this.sp];
+            break;
+          }
+          case Opcodes.OpSetIndex: {
+            const val5 = this.stack[--this.sp];
+            const idx5 = this.stack[--this.sp];
+            const obj5 = this.stack[--this.sp];
+            if (obj5 instanceof MonkeyArray && idx5 instanceof MonkeyInteger) {
+              let i5 = idx5.value;
+              if (i5 < 0) i5 += obj5.elements.length;
+              if (i5 >= 0 && i5 < obj5.elements.length) obj5.elements[i5] = val5;
+            } else if (obj5 instanceof MonkeyHash && idx5.fastHashKey) {
+              obj5.pairs.set(idx5.fastHashKey(), { key: idx5, value: val5 });
+            }
+            this.stack[this.sp++] = val5;
+            break;
+          }
+          case Opcodes.OpSlice: {
+            const end5 = this.stack[--this.sp];
+            const start5 = this.stack[--this.sp];
+            const obj6 = this.stack[--this.sp];
+            if (obj6 instanceof MonkeyArray) {
+              const len5 = obj6.elements.length;
+              let s5 = start5 === NULL ? 0 : start5.value;
+              let e5 = end5 === NULL ? len5 : end5.value;
+              if (s5 < 0) s5 += len5;
+              if (e5 < 0) e5 += len5;
+              if (s5 < 0) s5 = 0;
+              if (e5 > len5) e5 = len5;
+              this.stack[this.sp++] = new MonkeyArray(obj6.elements.slice(s5, e5));
+            } else if (obj6 instanceof MonkeyString) {
+              const len5 = obj6.value.length;
+              let s5 = start5 === NULL ? 0 : start5.value;
+              let e5 = end5 === NULL ? len5 : end5.value;
+              if (s5 < 0) s5 += len5;
+              if (e5 < 0) e5 += len5;
+              if (s5 < 0) s5 = 0;
+              if (e5 > len5) e5 = len5;
+              this.stack[this.sp++] = new MonkeyString(obj6.value.slice(s5, e5));
+            } else {
+              this.stack[this.sp++] = NULL;
+            }
             break;
           }
           default:
@@ -8418,5 +8516,158 @@ let sort = fn(arr) {
   function withStdlib(code) {
     return STDLIB_SOURCE + "\n" + code;
   }
+
+  // src/transpiler.js
+  var Transpiler = class {
+    constructor() {
+      this.indent = 0;
+    }
+    transpile(program) {
+      return program.statements.map((s) => this.transpileNode(s)).join("\n");
+    }
+    i() {
+      return "  ".repeat(this.indent);
+    }
+    transpileNode(node) {
+      if (node instanceof Program) {
+        return node.statements.map((s) => this.transpileNode(s)).join("\n");
+      }
+      if (node instanceof LetStatement) {
+        return `${this.i()}let ${node.name.value} = ${this.transpileNode(node.value)};`;
+      }
+      if (node instanceof ReturnStatement) {
+        return `${this.i()}return ${this.transpileNode(node.returnValue)};`;
+      }
+      if (node instanceof ExpressionStatement) {
+        return `${this.i()}${this.transpileNode(node.expression)};`;
+      }
+      if (node instanceof BlockStatement) {
+        this.indent++;
+        const body = node.statements.map((s) => this.transpileNode(s)).join("\n");
+        this.indent--;
+        return body;
+      }
+      if (node instanceof IntegerLiteral) {
+        return String(node.value);
+      }
+      if (node instanceof BooleanLiteral) {
+        return String(node.value);
+      }
+      if (node instanceof StringLiteral) {
+        return JSON.stringify(node.value);
+      }
+      if (node instanceof NullLiteral) {
+        return "null";
+      }
+      if (node instanceof Identifier) {
+        return node.value;
+      }
+      if (node instanceof PrefixExpression) {
+        return `(${node.operator}${this.transpileNode(node.right)})`;
+      }
+      if (node instanceof InfixExpression) {
+        return `(${this.transpileNode(node.left)} ${node.operator} ${this.transpileNode(node.right)})`;
+      }
+      if (node instanceof IfExpression) {
+        let result = `(${this.transpileNode(node.condition)}) {
+`;
+        result += this.transpileNode(node.consequence);
+        result += `
+${this.i()}}`;
+        if (node.alternative) {
+          result += ` else {
+${this.transpileNode(node.alternative)}
+${this.i()}}`;
+        }
+        return `${this.i()}if ${result}`;
+      }
+      if (node instanceof FunctionLiteral) {
+        const params = node.parameters.map((p, i) => {
+          if (node.defaults && node.defaults[i]) {
+            return `${p.value} = ${this.transpileNode(node.defaults[i])}`;
+          }
+          return p.value;
+        }).join(", ");
+        this.indent++;
+        const body = node.body.statements.map((s) => this.transpileNode(s)).join("\n");
+        this.indent--;
+        return `function(${params}) {
+${body}
+${this.i()}}`;
+      }
+      if (node instanceof CallExpression) {
+        const fn = this.transpileNode(node.function);
+        const args = node.arguments.map((a) => this.transpileNode(a)).join(", ");
+        const builtinMap = {
+          "puts": "console.log",
+          "len": "((x) => x.length)",
+          "push": "((a, v) => [...a, v])",
+          "str": "String",
+          "int": "parseInt"
+        };
+        if (node.function instanceof Identifier && builtinMap[node.function.value]) {
+          return `${builtinMap[node.function.value]}(${args})`;
+        }
+        return `${fn}(${args})`;
+      }
+      if (node instanceof ArrayLiteral) {
+        return `[${node.elements.map((e) => this.transpileNode(e)).join(", ")}]`;
+      }
+      if (node instanceof IndexExpression) {
+        return `${this.transpileNode(node.left)}[${this.transpileNode(node.index)}]`;
+      }
+      if (node instanceof HashLiteral) {
+        const pairs = [];
+        for (const [key, value] of node.pairs) {
+          pairs.push(`${this.transpileNode(key)}: ${this.transpileNode(value)}`);
+        }
+        return `{${pairs.join(", ")}}`;
+      }
+      if (node instanceof AssignExpression) {
+        return `${this.transpileNode(node.name)} = ${this.transpileNode(node.value)}`;
+      }
+      if (node instanceof IndexAssignExpression) {
+        return `${this.transpileNode(node.left)}[${this.transpileNode(node.index)}] = ${this.transpileNode(node.value)}`;
+      }
+      if (node instanceof WhileExpression) {
+        return `${this.i()}while (${this.transpileNode(node.condition)}) {
+${this.transpileNode(node.body)}
+${this.i()}}`;
+      }
+      if (node instanceof ForExpression) {
+        const init = this.transpileNode(node.init).replace(/;$/, "");
+        return `${this.i()}for (${init}; ${this.transpileNode(node.condition)}; ${this.transpileNode(node.update)}) {
+${this.transpileNode(node.body)}
+${this.i()}}`;
+      }
+      if (node instanceof ForInExpression) {
+        return `${this.i()}for (const ${node.variable} of ${this.transpileNode(node.iterable)}) {
+${this.transpileNode(node.body)}
+${this.i()}}`;
+      }
+      if (node instanceof BreakStatement) {
+        return `${this.i()}break`;
+      }
+      if (node instanceof ContinueStatement) {
+        return `${this.i()}continue`;
+      }
+      if (node instanceof TernaryExpression) {
+        return `(${this.transpileNode(node.condition)} ? ${this.transpileNode(node.consequence)} : ${this.transpileNode(node.alternative)})`;
+      }
+      if (node instanceof TemplateLiteral) {
+        const parts = node.parts.map((p) => {
+          if (p instanceof StringLiteral) return p.value;
+          return `\${${this.transpileNode(p)}}`;
+        });
+        return "`" + parts.join("") + "`";
+      }
+      if (node instanceof SliceExpression) {
+        const start = node.start ? this.transpileNode(node.start) : "0";
+        const end = node.end ? this.transpileNode(node.end) : "";
+        return `${this.transpileNode(node.left)}.slice(${start}${end ? ", " + end : ""})`;
+      }
+      return `/* unsupported: ${node.constructor.name} */`;
+    }
+  };
   return __toCommonJS(browser_bundle_exports);
 })();
