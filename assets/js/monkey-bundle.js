@@ -37,6 +37,8 @@ var Monkey = (() => {
     // Literals
     INT: "INT",
     STRING: "STRING",
+    TEMPLATE_STRING: "TEMPLATE_STRING",
+    // backtick string with ${} interpolation
     IDENT: "IDENT",
     // Operators
     ASSIGN: "=",
@@ -54,6 +56,11 @@ var Monkey = (() => {
     OR: "||",
     EQ: "==",
     NOT_EQ: "!=",
+    PLUS_ASSIGN: "+=",
+    MINUS_ASSIGN: "-=",
+    ASTERISK_ASSIGN: "*=",
+    SLASH_ASSIGN: "/=",
+    PERCENT_ASSIGN: "%=",
     // Delimiters
     COMMA: ",",
     SEMICOLON: ";",
@@ -73,6 +80,9 @@ var Monkey = (() => {
     ELSE: "ELSE",
     RETURN: "RETURN",
     WHILE: "WHILE",
+    FOR: "FOR",
+    BREAK: "BREAK",
+    CONTINUE: "CONTINUE",
     // Special
     EOF: "EOF",
     ILLEGAL: "ILLEGAL"
@@ -85,7 +95,10 @@ var Monkey = (() => {
     if: TokenType.IF,
     else: TokenType.ELSE,
     return: TokenType.RETURN,
-    while: TokenType.WHILE
+    while: TokenType.WHILE,
+    for: TokenType.FOR,
+    break: TokenType.BREAK,
+    continue: TokenType.CONTINUE
   };
   var Token = class {
     constructor(type, literal) {
@@ -144,6 +157,16 @@ var Monkey = (() => {
       this.readChar();
       return str;
     }
+    readTemplateString() {
+      const start = this.position + 1;
+      this.readChar();
+      while (this.ch !== null && this.ch !== "`") {
+        this.readChar();
+      }
+      const str = this.input.slice(start, this.position);
+      this.readChar();
+      return str;
+    }
     nextToken() {
       this.skipWhitespace();
       let tok;
@@ -157,10 +180,20 @@ var Monkey = (() => {
           }
           break;
         case "+":
-          tok = new Token(TokenType.PLUS, "+");
+          if (this.peekChar() === "=") {
+            this.readChar();
+            tok = new Token(TokenType.PLUS_ASSIGN, "+=");
+          } else {
+            tok = new Token(TokenType.PLUS, "+");
+          }
           break;
         case "-":
-          tok = new Token(TokenType.MINUS, "-");
+          if (this.peekChar() === "=") {
+            this.readChar();
+            tok = new Token(TokenType.MINUS_ASSIGN, "-=");
+          } else {
+            tok = new Token(TokenType.MINUS, "-");
+          }
           break;
         case "!":
           if (this.peekChar() === "=") {
@@ -171,13 +204,28 @@ var Monkey = (() => {
           }
           break;
         case "*":
-          tok = new Token(TokenType.ASTERISK, "*");
+          if (this.peekChar() === "=") {
+            this.readChar();
+            tok = new Token(TokenType.ASTERISK_ASSIGN, "*=");
+          } else {
+            tok = new Token(TokenType.ASTERISK, "*");
+          }
           break;
         case "/":
-          tok = new Token(TokenType.SLASH, "/");
+          if (this.peekChar() === "=") {
+            this.readChar();
+            tok = new Token(TokenType.SLASH_ASSIGN, "/=");
+          } else {
+            tok = new Token(TokenType.SLASH, "/");
+          }
           break;
         case "%":
-          tok = new Token(TokenType.PERCENT, "%");
+          if (this.peekChar() === "=") {
+            this.readChar();
+            tok = new Token(TokenType.PERCENT_ASSIGN, "%=");
+          } else {
+            tok = new Token(TokenType.PERCENT, "%");
+          }
           break;
         case "&":
           if (this.peekChar() === "&") {
@@ -240,6 +288,8 @@ var Monkey = (() => {
           break;
         case '"':
           return new Token(TokenType.STRING, this.readString());
+        case "`":
+          return new Token(TokenType.TEMPLATE_STRING, this.readTemplateString());
         case null:
           return new Token(TokenType.EOF, "");
         default:
@@ -517,29 +567,101 @@ var Monkey = (() => {
       return `${this.name} = ${this.value}`;
     }
   };
+  var ForExpression = class {
+    constructor(token, init, condition, update, body) {
+      this.token = token;
+      this.init = init;
+      this.condition = condition;
+      this.update = update;
+      this.body = body;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return `for (...) { ... }`;
+    }
+  };
+  var ForInExpression = class {
+    constructor(token, variable, iterable, body) {
+      this.token = token;
+      this.variable = variable;
+      this.iterable = iterable;
+      this.body = body;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return `for (${this.variable} in ...) { ... }`;
+    }
+  };
+  var BreakStatement = class {
+    constructor(token) {
+      this.token = token;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return "break";
+    }
+  };
+  var ContinueStatement = class {
+    constructor(token) {
+      this.token = token;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return "continue";
+    }
+  };
+  var TemplateLiteral = class {
+    constructor(token, parts) {
+      this.token = token;
+      this.parts = parts;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return "`...`";
+    }
+  };
 
   // src/parser.js
   var Precedence = {
     LOWEST: 1,
     ASSIGN: 2,
     // =
-    EQUALS: 3,
+    OR: 3,
+    // ||
+    AND: 4,
+    // &&
+    EQUALS: 5,
     // ==
-    LESSGREATER: 4,
+    LESSGREATER: 6,
     // > or <
-    SUM: 5,
+    SUM: 7,
     // +
-    PRODUCT: 6,
+    PRODUCT: 8,
     // *
-    PREFIX: 7,
+    PREFIX: 9,
     // -X or !X
-    CALL: 8,
+    CALL: 10,
     // myFunction(X)
-    INDEX: 9
+    INDEX: 11
     // array[index]
   };
   var TOKEN_PRECEDENCE = {
     [TokenType.ASSIGN]: Precedence.ASSIGN,
+    [TokenType.PLUS_ASSIGN]: Precedence.ASSIGN,
+    [TokenType.MINUS_ASSIGN]: Precedence.ASSIGN,
+    [TokenType.ASTERISK_ASSIGN]: Precedence.ASSIGN,
+    [TokenType.SLASH_ASSIGN]: Precedence.ASSIGN,
+    [TokenType.PERCENT_ASSIGN]: Precedence.ASSIGN,
     [TokenType.EQ]: Precedence.EQUALS,
     [TokenType.NOT_EQ]: Precedence.EQUALS,
     [TokenType.AND]: Precedence.AND,
@@ -556,7 +678,7 @@ var Monkey = (() => {
     [TokenType.LPAREN]: Precedence.CALL,
     [TokenType.LBRACKET]: Precedence.INDEX
   };
-  var Parser = class {
+  var Parser = class _Parser {
     constructor(lexer) {
       this.lexer = lexer;
       this.errors = [];
@@ -567,6 +689,7 @@ var Monkey = (() => {
       this.registerPrefix(TokenType.IDENT, () => this.parseIdentifier());
       this.registerPrefix(TokenType.INT, () => this.parseIntegerLiteral());
       this.registerPrefix(TokenType.STRING, () => this.parseStringLiteral());
+      this.registerPrefix(TokenType.TEMPLATE_STRING, () => this.parseTemplateLiteral());
       this.registerPrefix(TokenType.TRUE, () => this.parseBooleanLiteral());
       this.registerPrefix(TokenType.FALSE, () => this.parseBooleanLiteral());
       this.registerPrefix(TokenType.BANG, () => this.parsePrefixExpression());
@@ -577,6 +700,9 @@ var Monkey = (() => {
       this.registerPrefix(TokenType.LBRACKET, () => this.parseArrayLiteral());
       this.registerPrefix(TokenType.LBRACE, () => this.parseHashLiteral());
       this.registerPrefix(TokenType.WHILE, () => this.parseWhileExpression());
+      this.registerPrefix(TokenType.FOR, () => this.parseForExpression());
+      this.registerPrefix(TokenType.BREAK, () => new BreakStatement(this.curToken));
+      this.registerPrefix(TokenType.CONTINUE, () => new ContinueStatement(this.curToken));
       for (const op of [
         TokenType.PLUS,
         TokenType.MINUS,
@@ -586,13 +712,26 @@ var Monkey = (() => {
         TokenType.EQ,
         TokenType.NOT_EQ,
         TokenType.LT,
-        TokenType.GT
+        TokenType.GT,
+        TokenType.LT_EQ,
+        TokenType.GT_EQ,
+        TokenType.AND,
+        TokenType.OR
       ]) {
         this.registerInfix(op, (left) => this.parseInfixExpression(left));
       }
       this.registerInfix(TokenType.LPAREN, (left) => this.parseCallExpression(left));
       this.registerInfix(TokenType.LBRACKET, (left) => this.parseIndexExpression(left));
       this.registerInfix(TokenType.ASSIGN, (left) => this.parseAssignExpression(left));
+      for (const op of [
+        TokenType.PLUS_ASSIGN,
+        TokenType.MINUS_ASSIGN,
+        TokenType.ASTERISK_ASSIGN,
+        TokenType.SLASH_ASSIGN,
+        TokenType.PERCENT_ASSIGN
+      ]) {
+        this.registerInfix(op, (left) => this.parseCompoundAssignExpression(left));
+      }
       this.nextToken();
       this.nextToken();
     }
@@ -714,6 +853,45 @@ var Monkey = (() => {
     parseStringLiteral() {
       return new StringLiteral(this.curToken, this.curToken.literal);
     }
+    parseTemplateLiteral() {
+      const token = this.curToken;
+      const raw = token.literal;
+      const parts = [];
+      let i = 0;
+      while (i < raw.length) {
+        const dollarIdx = raw.indexOf("${", i);
+        if (dollarIdx === -1) {
+          parts.push(new StringLiteral(token, raw.slice(i)));
+          break;
+        }
+        if (dollarIdx > i) {
+          parts.push(new StringLiteral(token, raw.slice(i, dollarIdx)));
+        }
+        let braceCount = 1;
+        let j = dollarIdx + 2;
+        while (j < raw.length && braceCount > 0) {
+          if (raw[j] === "{") braceCount++;
+          else if (raw[j] === "}") braceCount--;
+          j++;
+        }
+        const exprStr = raw.slice(dollarIdx + 2, j - 1);
+        const exprLexer = new Lexer(exprStr);
+        const exprParser = new _Parser(exprLexer);
+        const expr = exprParser.parseExpression(Precedence.LOWEST);
+        if (exprParser.errors.length > 0) {
+          this.errors.push(...exprParser.errors);
+        }
+        parts.push(expr);
+        i = j;
+      }
+      if (parts.length === 0) {
+        return new StringLiteral(token, "");
+      }
+      if (parts.length === 1 && parts[0] instanceof StringLiteral) {
+        return parts[0];
+      }
+      return new TemplateLiteral(token, parts);
+    }
     parseBooleanLiteral() {
       return new BooleanLiteral(this.curToken, this.curTokenIs(TokenType.TRUE));
     }
@@ -763,6 +941,37 @@ var Monkey = (() => {
       if (!this.expectPeek(TokenType.LBRACE)) return null;
       const body = this.parseBlockStatement();
       return new WhileExpression(token, condition, body);
+    }
+    parseForExpression() {
+      const token = this.curToken;
+      if (!this.expectPeek(TokenType.LPAREN)) return null;
+      this.nextToken();
+      if (this.curTokenIs(TokenType.IDENT) && this.peekToken.type === TokenType.IDENT && this.peekToken.literal === "in") {
+        const varName = this.curToken.literal;
+        this.nextToken();
+        this.nextToken();
+        const iterable = this.parseExpression(Precedence.LOWEST);
+        if (!this.expectPeek(TokenType.RPAREN)) return null;
+        if (!this.expectPeek(TokenType.LBRACE)) return null;
+        const body2 = this.parseBlockStatement();
+        return new ForInExpression(token, varName, iterable, body2);
+      }
+      let init;
+      if (this.curTokenIs(TokenType.LET)) {
+        init = this.parseLetStatement();
+      } else {
+        init = new ExpressionStatement(this.curToken, this.parseExpression(Precedence.LOWEST));
+        if (!this.expectPeek(TokenType.SEMICOLON)) return null;
+      }
+      this.nextToken();
+      const condition = this.parseExpression(Precedence.LOWEST);
+      if (!this.expectPeek(TokenType.SEMICOLON)) return null;
+      this.nextToken();
+      const update = this.parseExpression(Precedence.LOWEST);
+      if (!this.expectPeek(TokenType.RPAREN)) return null;
+      if (!this.expectPeek(TokenType.LBRACE)) return null;
+      const body = this.parseBlockStatement();
+      return new ForExpression(token, init, condition, update, body);
     }
     parseFunctionLiteral() {
       const token = this.curToken;
@@ -814,6 +1023,26 @@ var Monkey = (() => {
       this.nextToken();
       const value = this.parseExpression(Precedence.LOWEST);
       return new AssignExpression(token, left, value);
+    }
+    parseCompoundAssignExpression(left) {
+      if (!(left instanceof Identifier)) {
+        this.errors.push(`cannot compound-assign to ${left.constructor.name}`);
+        return null;
+      }
+      const token = this.curToken;
+      const opMap = {
+        [TokenType.PLUS_ASSIGN]: TokenType.PLUS,
+        [TokenType.MINUS_ASSIGN]: TokenType.MINUS,
+        [TokenType.ASTERISK_ASSIGN]: TokenType.ASTERISK,
+        [TokenType.SLASH_ASSIGN]: TokenType.SLASH,
+        [TokenType.PERCENT_ASSIGN]: TokenType.PERCENT
+      };
+      const opToken = new Token(opMap[token.type], token.literal[0]);
+      this.nextToken();
+      const right = this.parseExpression(Precedence.LOWEST);
+      const ident = left;
+      const binExpr = new InfixExpression(opToken, ident, opToken.literal, right);
+      return new AssignExpression(token, ident, binExpr);
     }
     parseHashLiteral() {
       const token = this.curToken;
@@ -1279,6 +1508,26 @@ ${this.body}
     }
     return new MonkeyInteger(value);
   }
+  var MonkeyBreak = class {
+    constructor() {
+    }
+    type() {
+      return "BREAK";
+    }
+    inspect() {
+      return "break";
+    }
+  };
+  var MonkeyContinue = class {
+    constructor() {
+    }
+    type() {
+      return "CONTINUE";
+    }
+    inspect() {
+      return "continue";
+    }
+  };
 
   // src/compiler.js
   var _cfId = 0;
@@ -1323,6 +1572,7 @@ ${this.body}
       this.symbolTable = symbolTable || new SymbolTable();
       this.scopes = [new CompilationScope()];
       this.scopeIndex = 0;
+      this.loopStack = [];
       if (!symbolTable) {
         for (let i = 0; i < BUILTINS.length; i++) {
           this.symbolTable.defineBuiltin(i, BUILTINS[i]);
@@ -1421,7 +1671,7 @@ ${this.body}
             return null;
           }
         }
-        if (["==", "!=", ">", "<"].includes(node.operator)) {
+        if (["==", "!=", ">", "<", "<=", ">="].includes(node.operator)) {
           const left = this.tryFoldConstant(node.left);
           const right = this.tryFoldConstant(node.right);
           if (left instanceof MonkeyInteger && right instanceof MonkeyInteger) {
@@ -1438,6 +1688,12 @@ ${this.body}
                 break;
               case "<":
                 result = left.value < right.value;
+                break;
+              case "<=":
+                result = left.value <= right.value;
+                break;
+              case ">=":
+                result = left.value >= right.value;
                 break;
             }
             this.emit(result ? Opcodes.OpTrue : Opcodes.OpFalse);
@@ -1459,6 +1715,48 @@ ${this.body}
             if (err2) return err2;
             this.emitCompareOrSpecialized(Opcodes.OpGreaterThan, Opcodes.OpGreaterThanInt);
           }
+          return null;
+        }
+        if (node.operator === "<=") {
+          let err2 = this.compile(node.left);
+          if (err2) return err2;
+          err2 = this.compile(node.right);
+          if (err2) return err2;
+          this.emitCompareOrSpecialized(Opcodes.OpGreaterThan, Opcodes.OpGreaterThanInt);
+          this.emit(Opcodes.OpBang);
+          return null;
+        }
+        if (node.operator === ">=") {
+          let err2 = this.compile(node.right);
+          if (err2) return err2;
+          err2 = this.compile(node.left);
+          if (err2) return err2;
+          this.emitCompareOrSpecialized(Opcodes.OpGreaterThan, Opcodes.OpGreaterThanInt);
+          this.emit(Opcodes.OpBang);
+          return null;
+        }
+        if (node.operator === "&&") {
+          let err2 = this.compile(node.left);
+          if (err2) return err2;
+          const jumpFalsyPos = this.emit(Opcodes.OpJumpNotTruthy, 65535);
+          err2 = this.compile(node.right);
+          if (err2) return err2;
+          const jumpEndPos = this.emit(Opcodes.OpJump, 65535);
+          this.changeOperand(jumpFalsyPos, this.currentInstructions().length);
+          this.emit(Opcodes.OpFalse);
+          this.changeOperand(jumpEndPos, this.currentInstructions().length);
+          return null;
+        }
+        if (node.operator === "||") {
+          let err2 = this.compile(node.left);
+          if (err2) return err2;
+          const jumpFalsyPos = this.emit(Opcodes.OpJumpNotTruthy, 65535);
+          this.emit(Opcodes.OpTrue);
+          const jumpEndPos = this.emit(Opcodes.OpJump, 65535);
+          this.changeOperand(jumpFalsyPos, this.currentInstructions().length);
+          err2 = this.compile(node.right);
+          if (err2) return err2;
+          this.changeOperand(jumpEndPos, this.currentInstructions().length);
           return null;
         }
         let err = this.compile(node.left);
@@ -1526,12 +1824,18 @@ ${this.body}
       } else if (node instanceof StringLiteral) {
         const idx = this.addConstant(internString(node.value));
         this.emit(Opcodes.OpConstant, idx);
+      } else if (node instanceof TemplateLiteral) {
+        return this.compileTemplateLiteral(node);
       } else if (node instanceof BooleanLiteral) {
         this.emit(node.value ? Opcodes.OpTrue : Opcodes.OpFalse);
       } else if (node instanceof IfExpression) {
         return this.compileIfExpression(node);
       } else if (node instanceof WhileExpression) {
         return this.compileWhileExpression(node);
+      } else if (node instanceof ForExpression) {
+        return this.compileForExpression(node);
+      } else if (node instanceof ForInExpression) {
+        return this.compileForInExpression(node);
       } else if (node instanceof AssignExpression) {
         const sym = this.symbolTable.resolve(node.name.value);
         if (!sym) return `undefined variable: ${node.name.value}`;
@@ -1545,6 +1849,20 @@ ${this.body}
           this.emit(Opcodes.OpGetLocal, sym.index);
         } else {
           return `cannot assign to ${sym.scope} variable: ${node.name.value}`;
+        }
+      } else if (node instanceof BreakStatement) {
+        if (this.loopStack.length === 0) return "break outside of loop";
+        this.emit(Opcodes.OpNull);
+        const breakPos = this.emit(Opcodes.OpJump, 65535);
+        this.loopStack[this.loopStack.length - 1].breakPatches.push(breakPos);
+      } else if (node instanceof ContinueStatement) {
+        if (this.loopStack.length === 0) return "continue outside of loop";
+        const loopCtx = this.loopStack[this.loopStack.length - 1];
+        if (loopCtx.continueTarget >= 0) {
+          this.emit(Opcodes.OpJump, loopCtx.continueTarget);
+        } else {
+          const contPos = this.emit(Opcodes.OpJump, 65535);
+          loopCtx.continuePatches.push(contPos);
         }
       } else if (node instanceof Identifier) {
         const sym = this.symbolTable.resolve(node.value);
@@ -1614,6 +1932,7 @@ ${this.body}
     }
     compileWhileExpression(node) {
       const loopStart = this.currentInstructions().length;
+      this.loopStack.push({ breakPatches: [], continuePatches: [], continueTarget: loopStart });
       let err = this.compile(node.condition);
       if (err) return err;
       const jumpNotTruthyPos = this.emit(Opcodes.OpJumpNotTruthy, 9999);
@@ -1626,8 +1945,120 @@ ${this.body}
       this.emit(Opcodes.OpJump, loopStart);
       const afterLoop = this.currentInstructions().length;
       this.changeOperand(jumpNotTruthyPos, afterLoop);
+      const loopCtx = this.loopStack.pop();
+      for (const breakPos of loopCtx.breakPatches) {
+        this.changeOperand(breakPos, afterLoop);
+      }
       this.emit(Opcodes.OpNull);
       this.resetIntStack();
+      return null;
+    }
+    compileForExpression(node) {
+      let err = this.compile(node.init);
+      if (err) return err;
+      const loopStart = this.currentInstructions().length;
+      err = this.compile(node.condition);
+      if (err) return err;
+      const jumpNotTruthyPos = this.emit(Opcodes.OpJumpNotTruthy, 9999);
+      this.loopStack.push({ breakPatches: [], continuePatches: [], continueTarget: -1 });
+      err = this.compile(node.body);
+      if (err) return err;
+      if (this.lastInstructionIs(Opcodes.OpPop)) {
+      } else {
+        this.emit(Opcodes.OpPop);
+      }
+      const updatePos = this.currentInstructions().length;
+      const loopCtx = this.loopStack[this.loopStack.length - 1];
+      for (const contPos of loopCtx.continuePatches) {
+        this.changeOperand(contPos, updatePos);
+      }
+      err = this.compile(node.update);
+      if (err) return err;
+      this.emit(Opcodes.OpPop);
+      this.emit(Opcodes.OpJump, loopStart);
+      const afterLoop = this.currentInstructions().length;
+      this.changeOperand(jumpNotTruthyPos, afterLoop);
+      this.loopStack.pop();
+      for (const breakPos of loopCtx.breakPatches) {
+        this.changeOperand(breakPos, afterLoop);
+      }
+      this.emit(Opcodes.OpNull);
+      this.resetIntStack();
+      return null;
+    }
+    compileForInExpression(node) {
+      let err = this.compile(node.iterable);
+      if (err) return err;
+      const arrSym = this.symbolTable.define("__forin_arr_" + this.currentInstructions().length);
+      this.emit(arrSym.scope === "GLOBAL" ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal, arrSym.index);
+      this.emit(Opcodes.OpGetBuiltin, 0);
+      this.loadSymbol(arrSym);
+      this.emit(Opcodes.OpCall, 1);
+      const lenSym = this.symbolTable.define("__forin_len_" + this.currentInstructions().length);
+      this.emit(lenSym.scope === "GLOBAL" ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal, lenSym.index);
+      const zeroIdx = this.addConstant(new MonkeyInteger(0));
+      this.emit(Opcodes.OpConstant, zeroIdx);
+      const iSym = this.symbolTable.define("__forin_i_" + this.currentInstructions().length);
+      this.emit(iSym.scope === "GLOBAL" ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal, iSym.index);
+      const loopStart = this.currentInstructions().length;
+      this.loadSymbol(iSym);
+      this.loadSymbol(lenSym);
+      this.emit(Opcodes.OpLessThanInt);
+      const jumpNotTruthyPos = this.emit(Opcodes.OpJumpNotTruthy, 9999);
+      this.loopStack.push({ breakPatches: [], continuePatches: [], continueTarget: -1 });
+      this.loadSymbol(arrSym);
+      this.loadSymbol(iSym);
+      this.emit(Opcodes.OpIndex);
+      const varSym = this.symbolTable.define(node.variable);
+      this.emit(varSym.scope === "GLOBAL" ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal, varSym.index);
+      err = this.compile(node.body);
+      if (err) return err;
+      if (this.lastInstructionIs(Opcodes.OpPop)) {
+      } else {
+        this.emit(Opcodes.OpPop);
+      }
+      const incrementPos = this.currentInstructions().length;
+      const loopCtxIn = this.loopStack[this.loopStack.length - 1];
+      for (const contPos of loopCtxIn.continuePatches) {
+        this.changeOperand(contPos, incrementPos);
+      }
+      this.loadSymbol(iSym);
+      const oneIdx = this.addConstant(new MonkeyInteger(1));
+      this.emit(Opcodes.OpConstant, oneIdx);
+      this.emit(Opcodes.OpAdd);
+      this.emit(iSym.scope === "GLOBAL" ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal, iSym.index);
+      this.emit(Opcodes.OpJump, loopStart);
+      const afterLoop = this.currentInstructions().length;
+      this.changeOperand(jumpNotTruthyPos, afterLoop);
+      this.loopStack.pop();
+      for (const breakPos of loopCtxIn.breakPatches) {
+        this.changeOperand(breakPos, afterLoop);
+      }
+      this.emit(Opcodes.OpNull);
+      this.resetIntStack();
+      return null;
+    }
+    compileTemplateLiteral(node) {
+      let err = this.compileTemplatePart(node.parts[0]);
+      if (err) return err;
+      for (let i = 1; i < node.parts.length; i++) {
+        err = this.compileTemplatePart(node.parts[i]);
+        if (err) return err;
+        this.emit(Opcodes.OpAdd);
+      }
+      return null;
+    }
+    compileTemplatePart(part) {
+      if (part instanceof StringLiteral) {
+        const idx = this.addConstant(internString(part.value));
+        this.emit(Opcodes.OpConstant, idx);
+        return null;
+      }
+      const strIdx = BUILTINS.indexOf("str");
+      this.emit(Opcodes.OpGetBuiltin, strIdx);
+      const err = this.compile(part);
+      if (err) return err;
+      this.emit(Opcodes.OpCall, 1);
       return null;
     }
     compileFunctionLiteral(node) {
@@ -5875,6 +6306,22 @@ ${this.body}
                 this.recorder.pushRef(boxedRef);
               }
               this.push(new MonkeyString(left.value + right.value));
+            } else if (left instanceof MonkeyString && right instanceof MonkeyInteger && op === Opcodes.OpMul) {
+              if (recording()) {
+                this.recorder.popRef();
+                this.recorder.popRef();
+                this.recorder.abortTrace("string multiplication not JIT-compiled");
+              }
+              const n = right.value;
+              this.push(new MonkeyString(n > 0 ? left.value.repeat(n) : ""));
+            } else if (left instanceof MonkeyInteger && right instanceof MonkeyString && op === Opcodes.OpMul) {
+              if (recording()) {
+                this.recorder.popRef();
+                this.recorder.popRef();
+                this.recorder.abortTrace("string multiplication not JIT-compiled");
+              }
+              const n = left.value;
+              this.push(new MonkeyString(n > 0 ? right.value.repeat(n) : ""));
             } else {
               throw new Error(`unsupported types for ${op}: ${left.type()} and ${right.type()}`);
             }
@@ -5937,6 +6384,23 @@ ${this.body}
                   break;
                 default:
                   throw new Error(`unknown operator for booleans`);
+              }
+              this.push(result ? TRUE : FALSE);
+            } else if (left2 instanceof MonkeyString && right2 instanceof MonkeyString) {
+              if (recording()) {
+                this._abortRecording();
+              }
+              let result;
+              switch (op) {
+                case Opcodes.OpEqual:
+                  result = left2.value === right2.value;
+                  break;
+                case Opcodes.OpNotEqual:
+                  result = left2.value !== right2.value;
+                  break;
+                case Opcodes.OpGreaterThan:
+                  result = left2.value > right2.value;
+                  break;
               }
               this.push(result ? TRUE : FALSE);
             } else {
@@ -6156,7 +6620,8 @@ ${this.body}
               }
             }
             if (left3 instanceof MonkeyArray && index instanceof MonkeyInteger) {
-              const i = index.value;
+              let i = index.value;
+              if (i < 0) i += left3.elements.length;
               if (i < 0 || i >= left3.elements.length) {
                 this.push(NULL);
               } else {
@@ -6167,7 +6632,8 @@ ${this.body}
               const pair = left3.pairs.get(index.fastHashKey());
               this.push(pair ? pair.value : NULL);
             } else if (left3 instanceof MonkeyString && index instanceof MonkeyInteger) {
-              const i = index.value;
+              let i = index.value;
+              if (i < 0) i += left3.value.length;
               if (i < 0 || i >= left3.value.length) {
                 this.push(NULL);
               } else {
@@ -6503,6 +6969,20 @@ ${this.body}
                 this.recorder.pushRef(boxedRef);
               }
               this.push(new MonkeyString(left4.value + right4.value));
+            } else if (left4 instanceof MonkeyString && right4 instanceof MonkeyInteger && op === Opcodes.OpMulConst) {
+              if (recording()) {
+                this.recorder.popRef();
+                this.recorder.abortTrace("string multiplication not JIT-compiled");
+              }
+              const n = right4.value;
+              this.push(new MonkeyString(n > 0 ? left4.value.repeat(n) : ""));
+            } else if (left4 instanceof MonkeyInteger && right4 instanceof MonkeyString && op === Opcodes.OpMulConst) {
+              if (recording()) {
+                this.recorder.popRef();
+                this.recorder.abortTrace("string multiplication not JIT-compiled");
+              }
+              const n = left4.value;
+              this.push(new MonkeyString(n > 0 ? right4.value.repeat(n) : ""));
             } else {
               throw new Error(`unsupported types for constant op: ${left4.type()} and ${right4.type()}`);
             }
@@ -7176,6 +7656,11 @@ ${this.body}
     }
     if (node instanceof IfExpression) return evalIfExpression(node, env);
     if (node instanceof WhileExpression) return evalWhileExpression(node, env);
+    if (node instanceof ForExpression) return evalForExpression(node, env);
+    if (node instanceof ForInExpression) return evalForInExpression(node, env);
+    if (node instanceof BreakStatement) return new MonkeyBreak();
+    if (node instanceof ContinueStatement) return new MonkeyContinue();
+    if (node instanceof TemplateLiteral) return evalTemplateLiteral(node, env);
     if (node instanceof AssignExpression) {
       const val = monkeyEval(node.value, env);
       if (isError(val)) return val;
@@ -7226,6 +7711,7 @@ ${this.body}
       if (result) {
         const rt = result.type();
         if (rt === OBJ.RETURN || rt === OBJ.ERROR) return result;
+        if (result instanceof MonkeyBreak || result instanceof MonkeyContinue) return result;
       }
     }
     return result;
@@ -7298,16 +7784,65 @@ ${this.body}
     return NULL;
   }
   function evalWhileExpression(node, env) {
-    let result = NULL;
     while (true) {
       const condition = monkeyEval(node.condition, env);
       if (isError(condition)) return condition;
       if (!isTruthy(condition)) break;
-      result = monkeyEval(node.body, env);
+      const result = monkeyEval(node.body, env);
       if (isError(result)) return result;
       if (result instanceof MonkeyReturnValue) return result;
+      if (result instanceof MonkeyBreak) break;
+      if (result instanceof MonkeyContinue) continue;
     }
     return NULL;
+  }
+  function evalForExpression(node, env) {
+    const initResult = monkeyEval(node.init, env);
+    if (isError(initResult)) return initResult;
+    while (true) {
+      const condition = monkeyEval(node.condition, env);
+      if (isError(condition)) return condition;
+      if (!isTruthy(condition)) break;
+      const bodyResult = monkeyEval(node.body, env);
+      if (isError(bodyResult)) return bodyResult;
+      if (bodyResult instanceof MonkeyReturnValue) return bodyResult;
+      if (bodyResult instanceof MonkeyBreak) break;
+      if (bodyResult instanceof MonkeyContinue) {
+      }
+      const updateResult = monkeyEval(node.update, env);
+      if (isError(updateResult)) return updateResult;
+    }
+    return NULL;
+  }
+  function evalForInExpression(node, env) {
+    const iterable = monkeyEval(node.iterable, env);
+    if (isError(iterable)) return iterable;
+    let elements;
+    if (iterable instanceof MonkeyArray) {
+      elements = iterable.elements;
+    } else if (iterable instanceof MonkeyString) {
+      elements = iterable.value.split("").map((c) => new MonkeyString(c));
+    } else {
+      return new MonkeyError(`for-in: expected ARRAY or STRING, got ${iterable.type()}`);
+    }
+    for (const elem of elements) {
+      env.set(node.variable, elem);
+      const bodyResult = monkeyEval(node.body, env);
+      if (isError(bodyResult)) return bodyResult;
+      if (bodyResult instanceof MonkeyReturnValue) return bodyResult;
+      if (bodyResult instanceof MonkeyBreak) break;
+      if (bodyResult instanceof MonkeyContinue) continue;
+    }
+    return NULL;
+  }
+  function evalTemplateLiteral(node, env) {
+    let result = "";
+    for (const part of node.parts) {
+      const val = monkeyEval(part, env);
+      if (isError(val)) return val;
+      result += val.inspect();
+    }
+    return new MonkeyString(result);
   }
   function evalIdentifier(node, env) {
     const val = env.get(node.value);
@@ -7340,7 +7875,8 @@ ${this.body}
   }
   function evalIndexExpression(left, index) {
     if (left.type() === OBJ.ARRAY && index.type() === OBJ.INTEGER) {
-      const idx = index.value;
+      let idx = index.value;
+      if (idx < 0) idx += left.elements.length;
       const max = left.elements.length - 1;
       if (idx < 0 || idx > max) return NULL;
       return left.elements[idx];
@@ -7354,7 +7890,8 @@ ${this.body}
       return pair.value;
     }
     if (left.type() === OBJ.STRING && index instanceof MonkeyInteger) {
-      const idx = index.value;
+      let idx = index.value;
+      if (idx < 0) idx += left.value.length;
       if (idx < 0 || idx >= left.value.length) return NULL;
       return new MonkeyString(left.value[idx]);
     }
