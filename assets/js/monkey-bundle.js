@@ -50,6 +50,8 @@ var Monkey = (() => {
     GT: ">",
     LT_EQ: "<=",
     GT_EQ: ">=",
+    AND: "&&",
+    OR: "||",
     EQ: "==",
     NOT_EQ: "!=",
     // Delimiters
@@ -176,6 +178,22 @@ var Monkey = (() => {
           break;
         case "%":
           tok = new Token(TokenType.PERCENT, "%");
+          break;
+        case "&":
+          if (this.peekChar() === "&") {
+            this.readChar();
+            tok = new Token(TokenType.AND, "&&");
+          } else {
+            tok = new Token(TokenType.ILLEGAL, "&");
+          }
+          break;
+        case "|":
+          if (this.peekChar() === "|") {
+            this.readChar();
+            tok = new Token(TokenType.OR, "||");
+          } else {
+            tok = new Token(TokenType.ILLEGAL, "|");
+          }
           break;
         case "<":
           if (this.peekChar() === "=") {
@@ -524,6 +542,8 @@ var Monkey = (() => {
     [TokenType.ASSIGN]: Precedence.ASSIGN,
     [TokenType.EQ]: Precedence.EQUALS,
     [TokenType.NOT_EQ]: Precedence.EQUALS,
+    [TokenType.AND]: Precedence.AND,
+    [TokenType.OR]: Precedence.OR,
     [TokenType.LT]: Precedence.LESSGREATER,
     [TokenType.GT]: Precedence.LESSGREATER,
     [TokenType.LT_EQ]: Precedence.LESSGREATER,
@@ -908,7 +928,9 @@ var Monkey = (() => {
     OpDivInt: 47,
     OpMod: 48,
     OpModConst: 49,
-    OpModInt: 50
+    OpModInt: 50,
+    OpAnd: 51,
+    OpOr: 52
   };
   var definitions = {
     [Opcodes.OpConstant]: ["OpConstant", 2],
@@ -960,7 +982,9 @@ var Monkey = (() => {
     [Opcodes.OpDivInt]: ["OpDivInt"],
     [Opcodes.OpMod]: ["OpMod"],
     [Opcodes.OpModConst]: ["OpModConst", 2],
-    [Opcodes.OpModInt]: ["OpModInt"]
+    [Opcodes.OpModInt]: ["OpModInt"],
+    [Opcodes.OpAnd]: ["OpAnd"],
+    [Opcodes.OpOr]: ["OpOr"]
   };
   function lookup(op) {
     const def = definitions[op];
