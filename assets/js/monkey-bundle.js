@@ -89,6 +89,7 @@ var Monkey = (() => {
     CONTINUE: "CONTINUE",
     NULL_LIT: "NULL_LIT",
     MATCH: "MATCH",
+    DO: "DO",
     ARROW: "=>",
     UNDERSCORE: "_",
     // Special
@@ -108,7 +109,8 @@ var Monkey = (() => {
     break: TokenType.BREAK,
     continue: TokenType.CONTINUE,
     null: TokenType.NULL_LIT,
-    match: TokenType.MATCH
+    match: TokenType.MATCH,
+    do: TokenType.DO
   };
   var Token = class {
     constructor(type, literal) {
@@ -785,6 +787,19 @@ var Monkey = (() => {
       return `let [${this.names.map((n) => n ? n.value : "_").join(", ")}] = ...`;
     }
   };
+  var DoWhileExpression = class {
+    constructor(token, body, condition) {
+      this.token = token;
+      this.body = body;
+      this.condition = condition;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return "do { ... } while (...)";
+    }
+  };
 
   // src/parser.js
   var Precedence = {
@@ -865,6 +880,7 @@ var Monkey = (() => {
       this.registerPrefix(TokenType.CONTINUE, () => new ContinueStatement(this.curToken));
       this.registerPrefix(TokenType.NULL_LIT, () => new NullLiteral(this.curToken));
       this.registerPrefix(TokenType.MATCH, () => this.parseMatchExpression());
+      this.registerPrefix(TokenType.DO, () => this.parseDoWhileExpression());
       for (const op of [
         TokenType.PLUS,
         TokenType.MINUS,
@@ -1300,6 +1316,17 @@ var Monkey = (() => {
       }
       if (!this.expectPeek(TokenType.RBRACE)) return null;
       return new MatchExpression(token, subject, arms);
+    }
+    parseDoWhileExpression() {
+      const token = this.curToken;
+      if (!this.expectPeek(TokenType.LBRACE)) return null;
+      const body = this.parseBlockStatement();
+      if (!this.expectPeek(TokenType.WHILE)) return null;
+      if (!this.expectPeek(TokenType.LPAREN)) return null;
+      this.nextToken();
+      const condition = this.parseExpression(Precedence.LOWEST);
+      if (!this.expectPeek(TokenType.RPAREN)) return null;
+      return new DoWhileExpression(token, body, condition);
     }
     parsePostfixExpression(left, op) {
       if (!(left instanceof Identifier)) {
@@ -2187,6 +2214,8 @@ ${this.body}
         return this.compileIfExpression(node);
       } else if (node instanceof WhileExpression) {
         return this.compileWhileExpression(node);
+      } else if (node instanceof DoWhileExpression) {
+        return this.compileDoWhileExpression(node);
       } else if (node instanceof ForExpression) {
         return this.compileForExpression(node);
       } else if (node instanceof ForInExpression) {
@@ -2309,6 +2338,27 @@ ${this.body}
       }
       const afterAlternative = this.currentInstructions().length;
       this.changeOperand(jumpPos, afterAlternative);
+      this.resetIntStack();
+      return null;
+    }
+    compileDoWhileExpression(node) {
+      const loopStart = this.currentInstructions().length;
+      this.loopStack.push({ breakPatches: [], continuePatches: [], continueTarget: loopStart });
+      let err = this.compile(node.body);
+      if (err) return err;
+      if (this.lastInstructionIs(Opcodes.OpPop)) {
+      } else {
+        this.emit(Opcodes.OpPop);
+      }
+      err = this.compile(node.condition);
+      if (err) return err;
+      const jumpNotTruthyPos = this.emit(Opcodes.OpJumpNotTruthy, 9999);
+      this.emit(Opcodes.OpJump, loopStart);
+      const afterLoop = this.currentInstructions().length;
+      this.changeOperand(jumpNotTruthyPos, afterLoop);
+      const loopCtx = this.loopStack.pop();
+      for (const bp of loopCtx.breakPatches) this.changeOperand(bp, afterLoop);
+      this.emit(Opcodes.OpNull);
       this.resetIntStack();
       return null;
     }
@@ -8331,6 +8381,19 @@ ${this.body}
     }
     if (node instanceof IfExpression) return evalIfExpression(node, env);
     if (node instanceof WhileExpression) return evalWhileExpression(node, env);
+    if (node instanceof DoWhileExpression) {
+      do {
+        const result = monkeyEval(node.body, env);
+        if (isError(result)) return result;
+        if (result instanceof MonkeyReturnValue) return result;
+        if (result instanceof MonkeyBreak) break;
+        if (result instanceof MonkeyContinue) continue;
+        const cond = monkeyEval(node.condition, env);
+        if (isError(cond)) return cond;
+        if (!isTruthy(cond)) break;
+      } while (true);
+      return NULL;
+    }
     if (node instanceof ForExpression) return evalForExpression(node, env);
     if (node instanceof ForInExpression) return evalForInExpression(node, env);
     if (node instanceof BreakStatement) return new MonkeyBreak();
