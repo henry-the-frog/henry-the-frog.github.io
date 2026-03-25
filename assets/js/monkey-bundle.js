@@ -65,6 +65,7 @@ var Monkey = (() => {
     COMMA: ",",
     SEMICOLON: ";",
     COLON: ":",
+    QUESTION: "?",
     LPAREN: "(",
     RPAREN: ")",
     LBRACE: "{",
@@ -83,6 +84,7 @@ var Monkey = (() => {
     FOR: "FOR",
     BREAK: "BREAK",
     CONTINUE: "CONTINUE",
+    NULL_LIT: "NULL_LIT",
     // Special
     EOF: "EOF",
     ILLEGAL: "ILLEGAL"
@@ -98,7 +100,8 @@ var Monkey = (() => {
     while: TokenType.WHILE,
     for: TokenType.FOR,
     break: TokenType.BREAK,
-    continue: TokenType.CONTINUE
+    continue: TokenType.CONTINUE,
+    null: TokenType.NULL_LIT
   };
   var Token = class {
     constructor(type, literal) {
@@ -316,11 +319,14 @@ var Monkey = (() => {
         case ",":
           tok = new Token(TokenType.COMMA, ",");
           break;
-        case ";":
-          tok = new Token(TokenType.SEMICOLON, ";");
-          break;
         case ":":
           tok = new Token(TokenType.COLON, ":");
+          break;
+        case "?":
+          tok = new Token(TokenType.QUESTION, "?");
+          break;
+        case ";":
+          tok = new Token(TokenType.SEMICOLON, ";");
           break;
         case "(":
           tok = new Token(TokenType.LPAREN, "(");
@@ -698,6 +704,45 @@ var Monkey = (() => {
       return `${this.left}[${this.index}] = ${this.value}`;
     }
   };
+  var NullLiteral = class {
+    constructor(token) {
+      this.token = token;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return "null";
+    }
+  };
+  var SliceExpression = class {
+    constructor(token, left, start, end) {
+      this.token = token;
+      this.left = left;
+      this.start = start;
+      this.end = end;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return `${this.left}[${this.start}:${this.end}]`;
+    }
+  };
+  var TernaryExpression = class {
+    constructor(token, condition, consequence, alternative) {
+      this.token = token;
+      this.condition = condition;
+      this.consequence = consequence;
+      this.alternative = alternative;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return `${this.condition} ? ${this.consequence} : ${this.alternative}`;
+    }
+  };
 
   // src/parser.js
   var Precedence = {
@@ -730,6 +775,8 @@ var Monkey = (() => {
     [TokenType.ASTERISK_ASSIGN]: Precedence.ASSIGN,
     [TokenType.SLASH_ASSIGN]: Precedence.ASSIGN,
     [TokenType.PERCENT_ASSIGN]: Precedence.ASSIGN,
+    [TokenType.QUESTION]: Precedence.OR,
+    // ternary has same precedence as OR
     [TokenType.EQ]: Precedence.EQUALS,
     [TokenType.NOT_EQ]: Precedence.EQUALS,
     [TokenType.AND]: Precedence.AND,
@@ -771,6 +818,7 @@ var Monkey = (() => {
       this.registerPrefix(TokenType.FOR, () => this.parseForExpression());
       this.registerPrefix(TokenType.BREAK, () => new BreakStatement(this.curToken));
       this.registerPrefix(TokenType.CONTINUE, () => new ContinueStatement(this.curToken));
+      this.registerPrefix(TokenType.NULL_LIT, () => new NullLiteral(this.curToken));
       for (const op of [
         TokenType.PLUS,
         TokenType.MINUS,
@@ -791,6 +839,7 @@ var Monkey = (() => {
       this.registerInfix(TokenType.LPAREN, (left) => this.parseCallExpression(left));
       this.registerInfix(TokenType.LBRACKET, (left) => this.parseIndexExpression(left));
       this.registerInfix(TokenType.ASSIGN, (left) => this.parseAssignExpression(left));
+      this.registerInfix(TokenType.QUESTION, (left) => this.parseTernaryExpression(left));
       for (const op of [
         TokenType.PLUS_ASSIGN,
         TokenType.MINUS_ASSIGN,
@@ -995,8 +1044,14 @@ var Monkey = (() => {
       let alternative = null;
       if (this.peekTokenIs(TokenType.ELSE)) {
         this.nextToken();
-        if (!this.expectPeek(TokenType.LBRACE)) return null;
-        alternative = this.parseBlockStatement();
+        if (this.peekTokenIs(TokenType.IF)) {
+          this.nextToken();
+          const elseIf = this.parseIfExpression();
+          alternative = new BlockStatement(this.curToken, [new ExpressionStatement(this.curToken, elseIf)]);
+        } else {
+          if (!this.expectPeek(TokenType.LBRACE)) return null;
+          alternative = this.parseBlockStatement();
+        }
       }
       return new IfExpression(token, condition, consequence, alternative);
     }
@@ -1044,26 +1099,43 @@ var Monkey = (() => {
     parseFunctionLiteral() {
       const token = this.curToken;
       if (!this.expectPeek(TokenType.LPAREN)) return null;
-      const parameters = this.parseFunctionParameters();
+      const { params: parameters, defaults } = this.parseFunctionParameters();
       if (!this.expectPeek(TokenType.LBRACE)) return null;
       const body = this.parseBlockStatement();
-      return new FunctionLiteral(token, parameters, body);
+      const fn = new FunctionLiteral(token, parameters, body);
+      fn.defaults = defaults;
+      return fn;
     }
     parseFunctionParameters() {
       const params = [];
+      const defaults = [];
       if (this.peekTokenIs(TokenType.RPAREN)) {
         this.nextToken();
-        return params;
+        return { params, defaults };
       }
       this.nextToken();
       params.push(new Identifier(this.curToken, this.curToken.literal));
+      if (this.peekTokenIs(TokenType.ASSIGN)) {
+        this.nextToken();
+        this.nextToken();
+        defaults.push(this.parseExpression(Precedence.LOWEST));
+      } else {
+        defaults.push(null);
+      }
       while (this.peekTokenIs(TokenType.COMMA)) {
         this.nextToken();
         this.nextToken();
         params.push(new Identifier(this.curToken, this.curToken.literal));
+        if (this.peekTokenIs(TokenType.ASSIGN)) {
+          this.nextToken();
+          this.nextToken();
+          defaults.push(this.parseExpression(Precedence.LOWEST));
+        } else {
+          defaults.push(null);
+        }
       }
       if (!this.expectPeek(TokenType.RPAREN)) return null;
-      return params;
+      return { params, defaults };
     }
     parseCallExpression(fn) {
       const token = this.curToken;
@@ -1078,9 +1150,37 @@ var Monkey = (() => {
     parseIndexExpression(left) {
       const token = this.curToken;
       this.nextToken();
+      if (this.curTokenIs(TokenType.COLON)) {
+        let end = null;
+        if (!this.peekTokenIs(TokenType.RBRACKET)) {
+          this.nextToken();
+          end = this.parseExpression(Precedence.LOWEST);
+        }
+        if (!this.expectPeek(TokenType.RBRACKET)) return null;
+        return new SliceExpression(token, left, null, end);
+      }
       const index = this.parseExpression(Precedence.LOWEST);
+      if (this.peekTokenIs(TokenType.COLON)) {
+        this.nextToken();
+        let end = null;
+        if (!this.peekTokenIs(TokenType.RBRACKET)) {
+          this.nextToken();
+          end = this.parseExpression(Precedence.LOWEST);
+        }
+        if (!this.expectPeek(TokenType.RBRACKET)) return null;
+        return new SliceExpression(token, left, index, end);
+      }
       if (!this.expectPeek(TokenType.RBRACKET)) return null;
       return new IndexExpression(token, left, index);
+    }
+    parseTernaryExpression(condition) {
+      const token = this.curToken;
+      this.nextToken();
+      const consequence = this.parseExpression(Precedence.LOWEST);
+      if (!this.expectPeek(TokenType.COLON)) return null;
+      this.nextToken();
+      const alternative = this.parseExpression(Precedence.LOWEST);
+      return new TernaryExpression(token, condition, consequence, alternative);
     }
     parseAssignExpression(left) {
       if (left instanceof IndexExpression) {
@@ -1240,8 +1340,10 @@ var Monkey = (() => {
     OpOr: 52,
     OpSetFree: 53,
     // Set free variable in closure
-    OpSetIndex: 54
+    OpSetIndex: 54,
     // Set element at index: arr[i] = val
+    OpSlice: 55
+    // Slice: arr[start:end]
   };
   var definitions = {
     [Opcodes.OpConstant]: ["OpConstant", 2],
@@ -1297,7 +1399,8 @@ var Monkey = (() => {
     [Opcodes.OpAnd]: ["OpAnd"],
     [Opcodes.OpOr]: ["OpOr"],
     [Opcodes.OpSetFree]: ["OpSetFree", 1],
-    [Opcodes.OpSetIndex]: ["OpSetIndex"]
+    [Opcodes.OpSetIndex]: ["OpSetIndex"],
+    [Opcodes.OpSlice]: ["OpSlice"]
   };
   function lookup(op) {
     const def = definitions[op];
@@ -1908,6 +2011,19 @@ ${this.body}
       } else if (node instanceof StringLiteral) {
         const idx = this.addConstant(internString(node.value));
         this.emit(Opcodes.OpConstant, idx);
+      } else if (node instanceof NullLiteral) {
+        this.emit(Opcodes.OpNull);
+      } else if (node instanceof TernaryExpression) {
+        let err = this.compile(node.condition);
+        if (err) return err;
+        const jumpNotTruthyPos = this.emit(Opcodes.OpJumpNotTruthy, 9999);
+        err = this.compile(node.consequence);
+        if (err) return err;
+        const jumpPos = this.emit(Opcodes.OpJump, 9999);
+        this.changeOperand(jumpNotTruthyPos, this.currentInstructions().length);
+        err = this.compile(node.alternative);
+        if (err) return err;
+        this.changeOperand(jumpPos, this.currentInstructions().length);
       } else if (node instanceof TemplateLiteral) {
         return this.compileTemplateLiteral(node);
       } else if (node instanceof BooleanLiteral) {
@@ -1945,6 +2061,22 @@ ${this.body}
         err = this.compile(node.value);
         if (err) return err;
         this.emit(Opcodes.OpSetIndex);
+      } else if (node instanceof SliceExpression) {
+        let err = this.compile(node.left);
+        if (err) return err;
+        if (node.start) {
+          err = this.compile(node.start);
+          if (err) return err;
+        } else {
+          this.emit(Opcodes.OpNull);
+        }
+        if (node.end) {
+          err = this.compile(node.end);
+          if (err) return err;
+        } else {
+          this.emit(Opcodes.OpNull);
+        }
+        this.emit(Opcodes.OpSlice);
       } else if (node instanceof BreakStatement) {
         if (this.loopStack.length === 0) return "break outside of loop";
         this.emit(Opcodes.OpNull);
@@ -2163,6 +2295,21 @@ ${this.body}
       }
       for (const param of node.parameters) {
         this.symbolTable.define(param.value);
+      }
+      if (node.defaults) {
+        for (let i = 0; i < node.defaults.length; i++) {
+          if (node.defaults[i] !== null) {
+            const sym = this.symbolTable.resolve(node.parameters[i].value);
+            this.loadSymbol(sym);
+            this.emit(Opcodes.OpNull);
+            this.emit(Opcodes.OpEqual);
+            const jumpPos = this.emit(Opcodes.OpJumpNotTruthy, 65535);
+            const err2 = this.compile(node.defaults[i]);
+            if (err2) return err2;
+            this.emit(sym.scope === "LOCAL" ? Opcodes.OpSetLocal : Opcodes.OpSetGlobal, sym.index);
+            this.changeOperand(jumpPos, this.currentInstructions().length);
+          }
+        }
       }
       const err = this.compile(node.body);
       if (err) return err;
@@ -6305,7 +6452,16 @@ ${this.body}
           if (trace && this.jit && this.jit.compile(trace, this)) {
             this.jit.storeTrace(trace);
             if (!trace.isSideTrace) {
-              this._executeTrace(trace);
+              try {
+                this._executeTrace(trace);
+              } catch (e) {
+                for (const [key, t] of this.jit.traces) {
+                  if (t === trace) {
+                    this.jit.traces.delete(key);
+                    break;
+                  }
+                }
+              }
             }
             this.recorder = null;
             continue;
@@ -6498,6 +6654,12 @@ ${this.body}
                   break;
               }
               this.push(result ? TRUE : FALSE);
+            } else if (left2 === NULL || right2 === NULL) {
+              if (recording()) {
+                this._abortRecording();
+              }
+              const result = op === Opcodes.OpEqual ? left2 === right2 : left2 !== right2;
+              this.push(result ? TRUE : FALSE);
             } else {
               throw new Error(`unsupported comparison: ${left2.type()} and ${right2.type()}`);
             }
@@ -6571,7 +6733,19 @@ ${this.body}
                   this._executeTrace(existingTrace);
                   break;
                 } else if (!recording()) {
-                  this._executeTrace(existingTrace);
+                  const savedSp = this.sp;
+                  try {
+                    this._executeTrace(existingTrace);
+                  } catch (e) {
+                    this.sp = savedSp;
+                    for (const [key, t] of this.jit.traces) {
+                      if (t === existingTrace) {
+                        this.jit.traces.delete(key);
+                        break;
+                      }
+                    }
+                    frame.ip = target2 - 1;
+                  }
                   break;
                 }
               }
@@ -6744,17 +6918,26 @@ ${this.body}
             frame.ip += 1;
             const callee = this.stack[this.sp - 1 - numArgs];
             if (callee instanceof Closure) {
-              if (numArgs !== callee.fn.numParameters) {
+              if (numArgs > callee.fn.numParameters) {
                 throw new Error(`wrong number of arguments: want=${callee.fn.numParameters}, got=${numArgs}`);
               }
+              const missingArgs = callee.fn.numParameters - numArgs;
+              for (let ma = 0; ma < missingArgs; ma++) {
+                this.push(NULL);
+              }
+              const effectiveNumArgs = numArgs + missingArgs;
               if (this.jit && !recording()) {
                 const funcTrace = this.jit.getFuncTrace(callee.fn);
                 if (funcTrace && funcTrace.compiled) {
-                  const result = this._executeFuncTrace(funcTrace, callee, numArgs);
-                  if (result && !result.exit) {
-                    this.sp = this.sp - numArgs - 1;
-                    this.push(result);
-                    break;
+                  try {
+                    const result = this._executeFuncTrace(funcTrace, callee, effectiveNumArgs);
+                    if (result && !result.exit) {
+                      this.sp = this.sp - effectiveNumArgs - 1;
+                      this.push(result);
+                      break;
+                    }
+                  } catch (e) {
+                    this.jit.funcTraces.delete(callee.fn);
                   }
                 }
               }
@@ -6801,7 +6984,7 @@ ${this.body}
                   }
                 }
               }
-              const callFrame = new Frame(callee, this.sp - numArgs);
+              const callFrame = new Frame(callee, this.sp - effectiveNumArgs);
               this.pushFrame(callFrame);
               this.sp = callFrame.basePointer + callee.fn.numLocals;
               frame = callFrame;
@@ -6849,7 +7032,7 @@ ${this.body}
                 this.push(result !== void 0 ? result : NULL);
               }
             } else {
-              throw new Error("calling non-function/non-builtin");
+              throw new Error(`calling non-function/non-builtin: got ${callee?.constructor?.name || typeof callee} (sp=${this.sp}, bp=${frame.basePointer})`);
             }
             break;
           }
@@ -7006,11 +7189,40 @@ ${this.body}
               if (index.fastHashKey) {
                 obj.pairs.set(index.fastHashKey(), { key: index, value: val });
               }
-            } else if (obj instanceof MonkeyString) {
             }
             this.push(val);
             if (recording()) {
               this.recorder.abortTrace("OpSetIndex not JIT-compiled");
+            }
+            break;
+          }
+          case Opcodes.OpSlice: {
+            const end = this.pop();
+            const start = this.pop();
+            const obj = this.pop();
+            if (obj instanceof MonkeyArray) {
+              const len = obj.elements.length;
+              let s = start === NULL ? 0 : start.value;
+              let e = end === NULL ? len : end.value;
+              if (s < 0) s += len;
+              if (e < 0) e += len;
+              if (s < 0) s = 0;
+              if (e > len) e = len;
+              this.push(new MonkeyArray(obj.elements.slice(s, e)));
+            } else if (obj instanceof MonkeyString) {
+              const len = obj.value.length;
+              let s = start === NULL ? 0 : start.value;
+              let e = end === NULL ? len : end.value;
+              if (s < 0) s += len;
+              if (e < 0) e += len;
+              if (s < 0) s = 0;
+              if (e > len) e = len;
+              this.push(new MonkeyString(obj.value.slice(s, e)));
+            } else {
+              this.push(NULL);
+            }
+            if (recording()) {
+              this.recorder.abortTrace("OpSlice not JIT-compiled");
             }
             break;
           }
@@ -7786,6 +7998,12 @@ ${this.body}
     if (node instanceof ForInExpression) return evalForInExpression(node, env);
     if (node instanceof BreakStatement) return new MonkeyBreak();
     if (node instanceof ContinueStatement) return new MonkeyContinue();
+    if (node instanceof NullLiteral) return NULL;
+    if (node instanceof TernaryExpression) {
+      const condition = monkeyEval(node.condition, env);
+      if (isError(condition)) return condition;
+      return isTruthy(condition) ? monkeyEval(node.consequence, env) : monkeyEval(node.alternative, env);
+    }
     if (node instanceof TemplateLiteral) return evalTemplateLiteral(node, env);
     if (node instanceof AssignExpression) {
       const val = monkeyEval(node.value, env);
@@ -7795,7 +8013,9 @@ ${this.body}
     }
     if (node instanceof Identifier) return evalIdentifier(node, env);
     if (node instanceof FunctionLiteral) {
-      return new MonkeyFunction(node.parameters, node.body, env);
+      const fn = new MonkeyFunction(node.parameters, node.body, env);
+      fn.defaults = node.defaults || [];
+      return fn;
     }
     if (node instanceof CallExpression) {
       const fn = monkeyEval(node.function, env);
@@ -7824,6 +8044,31 @@ ${this.body}
         }
       }
       return val;
+    }
+    if (node instanceof SliceExpression) {
+      const obj = monkeyEval(node.left, env);
+      if (isError(obj)) return obj;
+      const start = node.start ? monkeyEval(node.start, env) : null;
+      if (start && isError(start)) return start;
+      const end = node.end ? monkeyEval(node.end, env) : null;
+      if (end && isError(end)) return end;
+      if (obj instanceof MonkeyArray) {
+        const len = obj.elements.length;
+        let s = start ? start.value : 0;
+        let e = end ? end.value : len;
+        if (s < 0) s += len;
+        if (e < 0) e += len;
+        return new MonkeyArray(obj.elements.slice(s, e));
+      }
+      if (obj instanceof MonkeyString) {
+        const len = obj.value.length;
+        let s = start ? start.value : 0;
+        let e = end ? end.value : len;
+        if (s < 0) s += len;
+        if (e < 0) e += len;
+        return new MonkeyString(obj.value.slice(s, e));
+      }
+      return NULL;
     }
     if (node instanceof IndexExpression) {
       const left = monkeyEval(node.left, env);
@@ -8006,7 +8251,14 @@ ${this.body}
     if (fn instanceof MonkeyFunction) {
       const extendedEnv = new Environment(fn.env);
       for (let i = 0; i < fn.parameters.length; i++) {
-        extendedEnv.set(fn.parameters[i].value, args[i]);
+        if (i < args.length) {
+          extendedEnv.set(fn.parameters[i].value, args[i]);
+        } else if (fn.defaults && fn.defaults[i]) {
+          const defaultVal = monkeyEval(fn.defaults[i], extendedEnv);
+          extendedEnv.set(fn.parameters[i].value, defaultVal);
+        } else {
+          extendedEnv.set(fn.parameters[i].value, NULL);
+        }
       }
       const result = monkeyEval(fn.body, extendedEnv);
       if (result instanceof MonkeyReturnValue) return result.value;

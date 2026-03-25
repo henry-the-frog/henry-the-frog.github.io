@@ -73,6 +73,44 @@ x /= 4;   // 6
 x %= 5;   // 1
 ```
 
+
+
+## Ternary Operator
+
+```
+let result = x > 0 ? "positive" : "non-positive";
+let abs = fn(x) { x >= 0 ? x : 0 - x };
+```
+
+## Array and String Slicing
+
+```
+[1, 2, 3, 4, 5][1:3]    // [2, 3]
+[1, 2, 3, 4, 5][2:]     // [3, 4, 5]
+[1, 2, 3, 4, 5][:3]     // [1, 2, 3]
+[1, 2, 3, 4, 5][-2:]    // [4, 5]
+"hello"[1:3]              // "el"
+"hello"[-3:]              // "llo"
+```
+
+## Default Function Parameters
+
+```
+let greet = fn(name, greeting = "hello") {
+  `${greeting} ${name}!`
+};
+greet("world")          // "hello world!"
+greet("world", "hi")    // "hi world!"
+```
+
+## Null
+
+```
+let x = null;
+x == null    // true
+null == 5    // false
+```
+
 ## Operators
 
 | Category | Operators |
