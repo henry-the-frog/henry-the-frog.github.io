@@ -59,6 +59,7 @@ var Monkey = (() => {
     OPTIONAL_CHAIN: "?.",
     DOT: ".",
     ARROW: "=>",
+    SPREAD: "...",
     PIPE: "|>",
     EQ: "==",
     NOT_EQ: "!=",
@@ -398,7 +399,13 @@ var Monkey = (() => {
         case "`":
           return new Token(TokenType.TEMPLATE_STRING, this.readTemplateString());
         case ".":
-          tok = new Token(TokenType.DOT, ".");
+          if (this.peekChar() === "." && this.input[this.readPosition + 1] === ".") {
+            this.readChar();
+            this.readChar();
+            tok = new Token(TokenType.SPREAD, "...");
+          } else {
+            tok = new Token(TokenType.DOT, ".");
+          }
           break;
         case null:
           return new Token(TokenType.EOF, "");
@@ -649,6 +656,18 @@ var Monkey = (() => {
     }
     toString() {
       return `(${this.left}?.[${this.index}])`;
+    }
+  };
+  var SpreadElement = class {
+    constructor(token, expression) {
+      this.token = token;
+      this.expression = expression;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return `...${this.expression}`;
     }
   };
   var HashLiteral = class {
@@ -1571,14 +1590,22 @@ var Monkey = (() => {
         return list;
       }
       this.nextToken();
-      list.push(this.parseExpression(Precedence.LOWEST));
+      list.push(this._parseExprOrSpread());
       while (this.peekTokenIs(TokenType.COMMA)) {
         this.nextToken();
         this.nextToken();
-        list.push(this.parseExpression(Precedence.LOWEST));
+        list.push(this._parseExprOrSpread());
       }
       if (!this.expectPeek(end)) return null;
       return list;
+    }
+    _parseExprOrSpread() {
+      if (this.curToken.type === TokenType.SPREAD) {
+        const token = this.curToken;
+        this.nextToken();
+        return new SpreadElement(token, this.parseExpression(Precedence.PREFIX));
+      }
+      return this.parseExpression(Precedence.LOWEST);
     }
   };
 
@@ -2476,11 +2503,44 @@ ${this.body}
         if (!sym) return `undefined variable: ${node.value}`;
         this.loadSymbol(sym);
       } else if (node instanceof ArrayLiteral) {
-        for (const el of node.elements) {
-          const err = this.compile(el);
-          if (err) return err;
+        const hasSpread = node.elements.some((el) => el instanceof SpreadElement);
+        if (!hasSpread) {
+          for (const el of node.elements) {
+            const err = this.compile(el);
+            if (err) return err;
+          }
+          this.emit(Opcodes.OpArray, node.elements.length);
+        } else {
+          let segments = 0;
+          let currentSegmentSize = 0;
+          for (const el of node.elements) {
+            if (el instanceof SpreadElement) {
+              if (currentSegmentSize > 0) {
+                this.emit(Opcodes.OpArray, currentSegmentSize);
+                segments++;
+                currentSegmentSize = 0;
+              }
+              const err = this.compile(el.expression);
+              if (err) return err;
+              segments++;
+            } else {
+              const err = this.compile(el);
+              if (err) return err;
+              currentSegmentSize++;
+            }
+          }
+          if (currentSegmentSize > 0) {
+            this.emit(Opcodes.OpArray, currentSegmentSize);
+            segments++;
+          }
+          if (segments === 0) {
+            this.emit(Opcodes.OpArray, 0);
+          } else {
+            for (let i = 1; i < segments; i++) {
+              this.emit(Opcodes.OpAdd);
+            }
+          }
         }
-        this.emit(Opcodes.OpArray, node.elements.length);
       } else if (node instanceof HashLiteral) {
         const pairs = [...node.pairs.entries()];
         pairs.sort((a, b) => a[0].toString().localeCompare(b[0].toString()));
@@ -7168,6 +7228,8 @@ ${this.body}
               }
               const n = left.value;
               this.push(new MonkeyString(n > 0 ? right.value.repeat(n) : ""));
+            } else if (left instanceof MonkeyArray && right instanceof MonkeyArray && op === Opcodes.OpAdd) {
+              this.push(new MonkeyArray([...left.elements, ...right.elements]));
             } else {
               throw new Error(`unsupported types for ${op}: ${left.type()} and ${right.type()}`);
             }
@@ -8787,9 +8849,23 @@ ${this.body}
       return applyFunction(fn, args);
     }
     if (node instanceof ArrayLiteral) {
-      const elements = evalExpressions(node.elements, env);
-      if (elements.length === 1 && isError(elements[0])) return elements[0];
-      return new MonkeyArray(elements);
+      const result = [];
+      for (const el of node.elements) {
+        if (el instanceof SpreadElement) {
+          const arr = monkeyEval(el.expression, env);
+          if (isError(arr)) return arr;
+          if (arr instanceof MonkeyArray) {
+            result.push(...arr.elements);
+          } else {
+            return newError(`spread requires array, got ${arr.type()}`);
+          }
+        } else {
+          const val = monkeyEval(el, env);
+          if (isError(val)) return val;
+          result.push(val);
+        }
+      }
+      return new MonkeyArray(result);
     }
     if (node instanceof IndexAssignExpression) {
       const obj = monkeyEval(node.left, env);
@@ -8920,6 +8996,9 @@ ${this.body}
       if (op === "<=") return nativeBoolToBooleanObject(left.value <= right.value);
       if (op === ">=") return nativeBoolToBooleanObject(left.value >= right.value);
       return newError(`unknown operator: ${left.type()} ${op} ${right.type()}`);
+    }
+    if (left.type() === OBJ.ARRAY && right.type() === OBJ.ARRAY && op === "+") {
+      return new MonkeyArray([...left.elements, ...right.elements]);
     }
     if (op === "==") return nativeBoolToBooleanObject(left === right);
     if (op === "!=") return nativeBoolToBooleanObject(left !== right);
