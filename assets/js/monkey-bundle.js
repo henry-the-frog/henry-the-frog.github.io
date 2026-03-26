@@ -59,6 +59,7 @@ var Monkey = (() => {
     OPTIONAL_CHAIN: "?.",
     DOT: ".",
     ARROW: "=>",
+    THIN_ARROW: "->",
     SPREAD: "...",
     PIPE: "|>",
     EQ: "==",
@@ -279,7 +280,10 @@ var Monkey = (() => {
           }
           break;
         case "-":
-          if (this.peekChar() === "=") {
+          if (this.peekChar() === ">") {
+            this.readChar();
+            tok = new Token(TokenType.THIN_ARROW, "->");
+          } else if (this.peekChar() === "=") {
             this.readChar();
             tok = new Token(TokenType.MINUS_ASSIGN, "-=");
           } else if (this.peekChar() === "-") {
@@ -600,12 +604,19 @@ var Monkey = (() => {
       this.parameters = parameters;
       this.body = body;
       this.restParam = null;
+      this.paramTypes = null;
+      this.returnType = null;
     }
     tokenLiteral() {
       return this.token.literal;
     }
     toString() {
-      return `fn(${this.parameters.join(", ")}) ${this.body}`;
+      const params = this.parameters.map((p, i) => {
+        const type = this.paramTypes && this.paramTypes[i] ? `: ${this.paramTypes[i]}` : "";
+        return `${p}${type}`;
+      });
+      const ret = this.returnType ? ` -> ${this.returnType}` : "";
+      return `fn(${params.join(", ")})${ret} ${this.body}`;
     }
   };
   var CallExpression = class {
@@ -1399,30 +1410,46 @@ var Monkey = (() => {
     parseFunctionLiteral() {
       const token = this.curToken;
       if (!this.expectPeek(TokenType.LPAREN)) return null;
-      const { params: parameters, defaults, restParam } = this.parseFunctionParameters();
+      const { params: parameters, defaults, restParam, paramTypes } = this.parseFunctionParameters();
+      let returnType = null;
+      if (this.peekTokenIs(TokenType.THIN_ARROW)) {
+        this.nextToken();
+        this.nextToken();
+        returnType = this.curToken.literal;
+      }
       if (!this.expectPeek(TokenType.LBRACE)) return null;
       const body = this.parseBlockStatement();
       const fn = new FunctionLiteral(token, parameters, body);
       fn.defaults = defaults;
       fn.restParam = restParam;
+      fn.paramTypes = paramTypes.some((t) => t !== null) ? paramTypes : null;
+      fn.returnType = returnType;
       return fn;
     }
     parseFunctionParameters() {
       const params = [];
       const defaults = [];
+      const paramTypes = [];
       let restParam = null;
       if (this.peekTokenIs(TokenType.RPAREN)) {
         this.nextToken();
-        return { params, defaults, restParam };
+        return { params, defaults, restParam, paramTypes };
       }
       this.nextToken();
       if (this.curToken.type === TokenType.SPREAD) {
         this.nextToken();
         restParam = new Identifier(this.curToken, this.curToken.literal);
         if (!this.expectPeek(TokenType.RPAREN)) return null;
-        return { params, defaults, restParam };
+        return { params, defaults, restParam, paramTypes };
       }
       params.push(new Identifier(this.curToken, this.curToken.literal));
+      if (this.peekTokenIs(TokenType.COLON)) {
+        this.nextToken();
+        this.nextToken();
+        paramTypes.push(this.curToken.literal);
+      } else {
+        paramTypes.push(null);
+      }
       if (this.peekTokenIs(TokenType.ASSIGN)) {
         this.nextToken();
         this.nextToken();
@@ -1439,6 +1466,13 @@ var Monkey = (() => {
           break;
         }
         params.push(new Identifier(this.curToken, this.curToken.literal));
+        if (this.peekTokenIs(TokenType.COLON)) {
+          this.nextToken();
+          this.nextToken();
+          paramTypes.push(this.curToken.literal);
+        } else {
+          paramTypes.push(null);
+        }
         if (this.peekTokenIs(TokenType.ASSIGN)) {
           this.nextToken();
           this.nextToken();
@@ -1448,7 +1482,7 @@ var Monkey = (() => {
         }
       }
       if (!this.expectPeek(TokenType.RPAREN)) return null;
-      return { params, defaults, restParam };
+      return { params, defaults, restParam, paramTypes };
     }
     parseCallExpression(fn) {
       const token = this.curToken;
@@ -1710,8 +1744,10 @@ var Monkey = (() => {
     // Set free variable in closure
     OpSetIndex: 54,
     // Set element at index: arr[i] = val
-    OpSlice: 55
+    OpSlice: 55,
     // Slice: arr[start:end]
+    OpTypeCheck: 56
+    // Type check: local(1) typeConstIdx(2) — validates param type
   };
   var definitions = {
     [Opcodes.OpConstant]: ["OpConstant", 2],
@@ -1768,7 +1804,9 @@ var Monkey = (() => {
     [Opcodes.OpOr]: ["OpOr"],
     [Opcodes.OpSetFree]: ["OpSetFree", 1],
     [Opcodes.OpSetIndex]: ["OpSetIndex"],
-    [Opcodes.OpSlice]: ["OpSlice"]
+    [Opcodes.OpSlice]: ["OpSlice"],
+    [Opcodes.OpTypeCheck]: ["OpTypeCheck", 1, 2]
+    // localSlot (1), typeNameConstIdx (2)
   };
   function lookup(op) {
     const def = definitions[op];
@@ -1980,7 +2018,7 @@ var Monkey = (() => {
       return `ERROR: ${this.message}`;
     }
   };
-  var MonkeyFunction = class {
+  var MonkeyFunction2 = class {
     constructor(parameters, body, env) {
       this.parameters = parameters;
       this.body = body;
@@ -2833,6 +2871,15 @@ ${this.body}
       if (hasRestParam) {
         this.symbolTable.define(node.restParam.value);
       }
+      if (node.paramTypes) {
+        for (let i = 0; i < node.paramTypes.length; i++) {
+          if (node.paramTypes[i]) {
+            const sym = this.symbolTable.resolve(node.parameters[i].value);
+            const typeIdx = this.addConstant(node.paramTypes[i]);
+            this.emit(Opcodes.OpTypeCheck, sym.index, typeIdx);
+          }
+        }
+      }
       if (node.defaults) {
         for (let i = 0; i < node.defaults.length; i++) {
           if (node.defaults[i] !== null) {
@@ -3202,6 +3249,7 @@ ${this.body}
       this.inlineFrames = [];
       this.inlineDepth = 0;
       this.inlineSlotRefs = /* @__PURE__ */ new Map();
+      this.trustedTypes = /* @__PURE__ */ new Map();
     }
     start(frameId, ip) {
       this.trace = new Trace(frameId, ip);
@@ -3214,6 +3262,7 @@ ${this.body}
       this.typeMap.clear();
       this.localSlotRefs.clear();
       this.globalSlotRefs.clear();
+      this.trustedTypes.clear();
       this.isSideTrace = false;
       this.parentTrace = null;
       this.parentGuardIdx = -1;
@@ -3235,6 +3284,7 @@ ${this.body}
       this.localSlotRefs.clear();
       this.globalSlotRefs.clear();
       this.isSideTrace = true;
+      this.trustedTypes.clear();
       this.parentTrace = parentTrace;
       this.parentGuardIdx = guardIdx;
       this.trace.addInst(IR.LOOP_START);
@@ -3255,6 +3305,7 @@ ${this.body}
       this.localSlotRefs.clear();
       this.globalSlotRefs.clear();
       this.isSideTrace = false;
+      this.trustedTypes.clear();
       this.isFuncTrace = true;
       this.tracedFn = fn;
       for (let i = 0; i < numArgs; i++) {
@@ -3382,6 +3433,11 @@ ${this.body}
     }
     // Record a guard for a value's type
     guardType(ref, value) {
+      const trustedType = this.trustedTypeForRef(ref);
+      if (trustedType) {
+        this.typeMap.set(ref, trustedType);
+        return trustedType;
+      }
       const exitIp = this.getGuardExitIp();
       if (value instanceof MonkeyInteger) {
         const gid = this.addGuardInst(IR.GUARD_INT, { ref, exitIp });
@@ -3405,6 +3461,20 @@ ${this.body}
     // Check if we already know a ref's type (skip redundant guards)
     knownType(ref) {
       return this.typeMap.get(ref) || null;
+    }
+    // Check if an IR ref corresponds to a local with a trusted type annotation
+    trustedTypeForRef(ref) {
+      if (this.trustedTypes.size === 0) return null;
+      const inst = this.trace.ir[ref];
+      if (inst && inst.op === IR.LOAD_LOCAL && this.trustedTypes.has(inst.slot)) {
+        return this.trustedTypes.get(inst.slot);
+      }
+      for (const [slot, slotRef] of this.inlineSlotRefs) {
+        if (slotRef === ref && this.trustedTypes.has(slot)) {
+          return this.trustedTypes.get(slot);
+        }
+      }
+      return null;
     }
     // Record an integer arithmetic operation
     recordIntArith(op, leftVal, rightVal) {
@@ -8037,6 +8107,48 @@ ${this.body}
             }
             break;
           }
+          case Opcodes.OpTypeCheck: {
+            const localIdx = ins[ip + 1];
+            const typeIdx = ins[ip + 2] << 8 | ins[ip + 3];
+            frame.ip += 3;
+            const val = this.stack[frame.basePointer + localIdx];
+            const typeName = this.constants[typeIdx];
+            let ok = false;
+            switch (typeName) {
+              case "int":
+                ok = val instanceof MonkeyInteger;
+                break;
+              case "bool":
+                ok = val instanceof MonkeyBoolean;
+                break;
+              case "string":
+                ok = val instanceof MonkeyString;
+                break;
+              case "array":
+                ok = val instanceof MonkeyArray;
+                break;
+              case "hash":
+                ok = val instanceof MonkeyHash;
+                break;
+              case "fn":
+                ok = val instanceof Closure || val instanceof MonkeyFunction || val instanceof MonkeyBuiltin;
+                break;
+              case "null":
+                ok = val === NULL;
+                break;
+              default:
+                ok = true;
+            }
+            if (!ok) {
+              const actualType = val === NULL ? "null" : val.constructor.name.replace("Monkey", "").toLowerCase();
+              throw new Error(`Type error: expected ${typeName}, got ${actualType}`);
+            }
+            if (recording()) {
+              const absSlot = this.recorder.currentBaseOffset() + localIdx;
+              this.recorder.trustedTypes.set(absSlot, typeName);
+            }
+            break;
+          }
           case Opcodes.OpCurrentClosure:
             this.push(frame.closure);
             if (recording()) {
@@ -8379,6 +8491,44 @@ ${this.body}
               this.stack[this.sp++] = new MonkeyString(obj6.value.slice(s5, e5));
             } else {
               this.stack[this.sp++] = NULL;
+            }
+            break;
+          }
+          case Opcodes.OpTypeCheck: {
+            const localIdx7 = ins[ip + 1];
+            const typeIdx7 = ins[ip + 2] << 8 | ins[ip + 3];
+            frame.ip += 3;
+            const val7 = this.stack[frame.basePointer + localIdx7];
+            const typeName7 = this.constants[typeIdx7];
+            let ok7 = false;
+            switch (typeName7) {
+              case "int":
+                ok7 = val7 instanceof MonkeyInteger;
+                break;
+              case "bool":
+                ok7 = val7 instanceof MonkeyBoolean;
+                break;
+              case "string":
+                ok7 = val7 instanceof MonkeyString;
+                break;
+              case "array":
+                ok7 = val7 instanceof MonkeyArray;
+                break;
+              case "hash":
+                ok7 = val7 instanceof MonkeyHash;
+                break;
+              case "fn":
+                ok7 = val7 instanceof Closure || val7 instanceof MonkeyFunction || val7 instanceof MonkeyBuiltin;
+                break;
+              case "null":
+                ok7 = val7 === NULL;
+                break;
+              default:
+                ok7 = true;
+            }
+            if (!ok7) {
+              const actualType7 = val7 === NULL ? "null" : val7.constructor.name.replace("Monkey", "").toLowerCase();
+              throw new Error(`Type error: expected ${typeName7}, got ${actualType7}`);
             }
             break;
           }
@@ -9074,7 +9224,7 @@ ${this.body}
     }
     if (node instanceof Identifier) return evalIdentifier(node, env);
     if (node instanceof FunctionLiteral) {
-      const fn = new MonkeyFunction(node.parameters, node.body, env);
+      const fn = new MonkeyFunction2(node.parameters, node.body, env);
       fn.defaults = node.defaults || [];
       return fn;
     }
@@ -9358,7 +9508,7 @@ ${this.body}
     return result;
   }
   function applyFunction(fn, args) {
-    if (fn instanceof MonkeyFunction) {
+    if (fn instanceof MonkeyFunction2) {
       const extendedEnv = new Environment(fn.env);
       for (let i = 0; i < fn.parameters.length; i++) {
         if (i < args.length) {
