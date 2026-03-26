@@ -55,6 +55,11 @@ var Monkey = (() => {
     GT_EQ: ">=",
     AND: "&&",
     OR: "||",
+    NULLISH: "??",
+    OPTIONAL_CHAIN: "?.",
+    DOT: ".",
+    ARROW: "=>",
+    PIPE: "|>",
     EQ: "==",
     NOT_EQ: "!=",
     PLUS_ASSIGN: "+=",
@@ -78,6 +83,7 @@ var Monkey = (() => {
     // Keywords
     FUNCTION: "FUNCTION",
     LET: "LET",
+    CONST: "CONST",
     TRUE: "TRUE",
     FALSE: "FALSE",
     IF: "IF",
@@ -90,7 +96,6 @@ var Monkey = (() => {
     NULL_LIT: "NULL_LIT",
     MATCH: "MATCH",
     DO: "DO",
-    ARROW: "=>",
     UNDERSCORE: "_",
     // Special
     EOF: "EOF",
@@ -99,6 +104,7 @@ var Monkey = (() => {
   var KEYWORDS = {
     fn: TokenType.FUNCTION,
     let: TokenType.LET,
+    const: TokenType.CONST,
     true: TokenType.TRUE,
     false: TokenType.FALSE,
     if: TokenType.IF,
@@ -140,6 +146,18 @@ var Monkey = (() => {
       }
       if (this.ch === "/" && this.peekChar() === "/") {
         while (this.ch !== "\n" && this.ch !== "\0") {
+          this.readChar();
+        }
+        this.skipWhitespace();
+      }
+      if (this.ch === "/" && this.peekChar() === "*") {
+        this.readChar();
+        this.readChar();
+        while (!(this.ch === "*" && this.peekChar() === "/") && this.ch !== "\0") {
+          this.readChar();
+        }
+        if (this.ch === "*") {
+          this.readChar();
           this.readChar();
         }
         this.skipWhitespace();
@@ -314,6 +332,9 @@ var Monkey = (() => {
           if (this.peekChar() === "|") {
             this.readChar();
             tok = new Token(TokenType.OR, "||");
+          } else if (this.peekChar() === ">") {
+            this.readChar();
+            tok = new Token(TokenType.PIPE, "|>");
           } else {
             tok = new Token(TokenType.ILLEGAL, "|");
           }
@@ -341,7 +362,15 @@ var Monkey = (() => {
           tok = new Token(TokenType.COLON, ":");
           break;
         case "?":
-          tok = new Token(TokenType.QUESTION, "?");
+          if (this.peekChar() === "?") {
+            this.readChar();
+            tok = new Token(TokenType.NULLISH, "??");
+          } else if (this.peekChar() === ".") {
+            this.readChar();
+            tok = new Token(TokenType.OPTIONAL_CHAIN, "?.");
+          } else {
+            tok = new Token(TokenType.QUESTION, "?");
+          }
           break;
         case ";":
           tok = new Token(TokenType.SEMICOLON, ";");
@@ -368,6 +397,9 @@ var Monkey = (() => {
           return new Token(TokenType.STRING, this.readString());
         case "`":
           return new Token(TokenType.TEMPLATE_STRING, this.readTemplateString());
+        case ".":
+          tok = new Token(TokenType.DOT, ".");
+          break;
         case null:
           return new Token(TokenType.EOF, "");
         default:
@@ -419,12 +451,13 @@ var Monkey = (() => {
       this.token = token;
       this.name = name;
       this.value = value;
+      this.isConst = token.type === "CONST";
     }
     tokenLiteral() {
       return this.token.literal;
     }
     toString() {
-      return `let ${this.name} = ${this.value};`;
+      return `${this.isConst ? "const" : "let"} ${this.name} = ${this.value};`;
     }
   };
   var ReturnStatement = class {
@@ -603,6 +636,19 @@ var Monkey = (() => {
     }
     toString() {
       return `(${this.left}[${this.index}])`;
+    }
+  };
+  var OptionalChainExpression = class {
+    constructor(token, left, index) {
+      this.token = token;
+      this.left = left;
+      this.index = index;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return `(${this.left}?.[${this.index}])`;
     }
   };
   var HashLiteral = class {
@@ -806,23 +852,27 @@ var Monkey = (() => {
     LOWEST: 1,
     ASSIGN: 2,
     // =
-    OR: 3,
+    PIPE: 3,
+    // |>
+    NULLISH: 4,
+    // ??
+    OR: 5,
     // ||
-    AND: 4,
+    AND: 6,
     // &&
-    EQUALS: 5,
+    EQUALS: 7,
     // ==
-    LESSGREATER: 6,
+    LESSGREATER: 8,
     // > or <
-    SUM: 7,
+    SUM: 9,
     // +
-    PRODUCT: 8,
+    PRODUCT: 10,
     // *
-    PREFIX: 9,
+    PREFIX: 11,
     // -X or !X
-    CALL: 10,
+    CALL: 12,
     // myFunction(X)
-    INDEX: 11
+    INDEX: 13
     // array[index]
   };
   var TOKEN_PRECEDENCE = {
@@ -833,6 +883,10 @@ var Monkey = (() => {
     [TokenType.SLASH_ASSIGN]: Precedence.ASSIGN,
     [TokenType.PERCENT_ASSIGN]: Precedence.ASSIGN,
     [TokenType.QUESTION]: Precedence.OR,
+    [TokenType.NULLISH]: Precedence.NULLISH,
+    [TokenType.PIPE]: Precedence.PIPE,
+    [TokenType.OPTIONAL_CHAIN]: Precedence.INDEX,
+    [TokenType.DOT]: Precedence.INDEX,
     [TokenType.PLUS_PLUS]: Precedence.CALL,
     // postfix, high precedence
     [TokenType.MINUS_MINUS]: Precedence.CALL,
@@ -894,10 +948,14 @@ var Monkey = (() => {
         TokenType.LT_EQ,
         TokenType.GT_EQ,
         TokenType.AND,
-        TokenType.OR
+        TokenType.OR,
+        TokenType.NULLISH
       ]) {
         this.registerInfix(op, (left) => this.parseInfixExpression(left));
       }
+      this.registerInfix(TokenType.PIPE, (left) => this.parsePipeExpression(left));
+      this.registerInfix(TokenType.OPTIONAL_CHAIN, (left) => this.parseOptionalChainExpression(left));
+      this.registerInfix(TokenType.DOT, (left) => this.parseDotExpression(left));
       this.registerInfix(TokenType.LPAREN, (left) => this.parseCallExpression(left));
       this.registerInfix(TokenType.LBRACKET, (left) => this.parseIndexExpression(left));
       this.registerInfix(TokenType.ASSIGN, (left) => this.parseAssignExpression(left));
@@ -963,6 +1021,8 @@ var Monkey = (() => {
     parseStatement() {
       switch (this.curToken.type) {
         case TokenType.LET:
+          return this.parseLetStatement();
+        case TokenType.CONST:
           return this.parseLetStatement();
         case TokenType.RETURN:
           return this.parseReturnStatement();
@@ -1117,7 +1177,108 @@ var Monkey = (() => {
       const right = this.parseExpression(precedence);
       return new InfixExpression(token, left, operator, right);
     }
+    parsePipeExpression(left) {
+      const token = this.curToken;
+      this.nextToken();
+      const right = this.parseExpression(Precedence.PIPE);
+      if (right instanceof CallExpression) {
+        right.arguments.unshift(left);
+        return right;
+      } else {
+        return new CallExpression(token, right, [left]);
+      }
+    }
+    parseOptionalChainExpression(left) {
+      const token = this.curToken;
+      if (this.peekToken.type === TokenType.LBRACKET) {
+        this.nextToken();
+        this.nextToken();
+        const index = this.parseExpression(Precedence.LOWEST);
+        if (!this.expectPeek(TokenType.RBRACKET)) return null;
+        return new OptionalChainExpression(token, left, index);
+      } else if (this.peekToken.type === TokenType.IDENT) {
+        this.nextToken();
+        const key = new StringLiteral(this.curToken, this.curToken.literal);
+        return new OptionalChainExpression(token, left, key);
+      } else {
+        this.errors.push(`expected [ or identifier after ?., got ${this.peekToken.type}`);
+        return left;
+      }
+    }
+    parseDotExpression(left) {
+      const token = this.curToken;
+      if (this.peekToken.type !== TokenType.IDENT) {
+        this.errors.push(`expected identifier after '.', got ${this.peekToken.type}`);
+        return left;
+      }
+      this.nextToken();
+      const key = new StringLiteral(this.curToken, this.curToken.literal);
+      return new IndexExpression(token, left, key);
+    }
+    parseArrowExpression(left) {
+      if (!(left instanceof Identifier)) {
+        this.errors.push(`expected identifier before '=>', got ${left.constructor.name}`);
+        return null;
+      }
+      const token = this.curToken;
+      const params = [left];
+      this.nextToken();
+      let body;
+      if (this.curToken.type === TokenType.LBRACE) {
+        body = this.parseBlockStatement();
+      } else {
+        const expr = this.parseExpression(Precedence.LOWEST);
+        body = new BlockStatement(this.curToken, [new ExpressionStatement(this.curToken, expr)]);
+      }
+      return new FunctionLiteral(token, params, body);
+    }
     parseGroupedExpression() {
+      const savedPos = this.lexer.position;
+      const savedReadPos = this.lexer.readPosition;
+      const savedCh = this.lexer.ch;
+      const savedCurToken = this.curToken;
+      const savedPeekToken = this.peekToken;
+      this.nextToken();
+      const params = [];
+      let isArrow = false;
+      if (this.curToken.type === TokenType.RPAREN) {
+        if (this.peekToken.type === TokenType.ARROW) {
+          isArrow = true;
+        }
+      } else if (this.curToken.type === TokenType.IDENT) {
+        params.push(new Identifier(this.curToken, this.curToken.literal));
+        while (this.peekToken.type === TokenType.COMMA) {
+          this.nextToken();
+          this.nextToken();
+          if (this.curToken.type !== TokenType.IDENT) {
+            break;
+          }
+          params.push(new Identifier(this.curToken, this.curToken.literal));
+        }
+        if (this.peekToken.type === TokenType.RPAREN) {
+          this.nextToken();
+          if (this.peekToken.type === TokenType.ARROW) {
+            isArrow = true;
+          }
+        }
+      }
+      if (isArrow) {
+        this.nextToken();
+        this.nextToken();
+        let body;
+        if (this.curToken.type === TokenType.LBRACE) {
+          body = this.parseBlockStatement();
+        } else {
+          const expr = this.parseExpression(Precedence.LOWEST);
+          body = new BlockStatement(this.curToken, [new ExpressionStatement(this.curToken, expr)]);
+        }
+        return new FunctionLiteral(savedCurToken, params, body);
+      }
+      this.lexer.position = savedPos;
+      this.lexer.readPosition = savedReadPos;
+      this.lexer.ch = savedCh;
+      this.curToken = savedCurToken;
+      this.peekToken = savedPeekToken;
       this.nextToken();
       const exp = this.parseExpression(Precedence.LOWEST);
       if (!this.expectPeek(TokenType.RPAREN)) return null;
@@ -1629,9 +1790,10 @@ var Monkey = (() => {
       this.numDefinitions = 0;
       this.freeSymbols = [];
     }
-    define(name) {
+    define(name, isConst = false) {
       const scope = this.outer === null ? SCOPE.GLOBAL : SCOPE.LOCAL;
       const sym = new Symbol2(name, scope, this.numDefinitions);
+      sym.isConst = isConst;
       this.store.set(name, sym);
       this.numDefinitions++;
       return sym;
@@ -1740,9 +1902,9 @@ var Monkey = (() => {
       return this._hk;
     }
     fastHashKey() {
-      return this;
+      return `s:${this.value}`;
     }
-    // identity — only works if interned
+    // value-based for correct hash lookup
   };
   var STRING_INTERN = /* @__PURE__ */ new Map();
   var STRING_INTERN_MAX = 4096;
@@ -1833,6 +1995,7 @@ ${this.body}
   var Environment = class {
     constructor(outer = null) {
       this.store = /* @__PURE__ */ new Map();
+      this.consts = /* @__PURE__ */ new Set();
       this.outer = outer;
     }
     get(name) {
@@ -1841,8 +2004,16 @@ ${this.body}
       if (this.outer) return this.outer.get(name);
       return void 0;
     }
-    set(name, val) {
+    isConst(name) {
+      if (this.consts.has(name)) return true;
+      if (this.store.has(name)) return false;
+      if (this.outer) return this.outer.isConst(name);
+      return false;
+    }
+    set(name, val, isConst = false) {
+      if (this.isConst(name)) return new MonkeyError(`cannot assign to const variable: ${name}`);
       this.store.set(name, val);
+      if (isConst) this.consts.add(name);
       return val;
     }
   };
@@ -1999,7 +2170,7 @@ ${this.body}
           if (err) return err;
         }
       } else if (node instanceof LetStatement) {
-        const sym = this.symbolTable.define(node.name.value);
+        const sym = this.symbolTable.define(node.name.value, node.isConst);
         if (node.value instanceof FunctionLiteral) {
           node.value.name = node.name.value;
         }
@@ -2110,8 +2281,10 @@ ${this.body}
           if (err2) return err2;
           const jumpEndPos = this.emit(Opcodes.OpJump, 65535);
           this.changeOperand(jumpFalsyPos, this.currentInstructions().length);
+          this.resetPeepholeState();
           this.emit(Opcodes.OpFalse);
           this.changeOperand(jumpEndPos, this.currentInstructions().length);
+          this.resetPeepholeState();
           return null;
         }
         if (node.operator === "||") {
@@ -2124,6 +2297,26 @@ ${this.body}
           err2 = this.compile(node.right);
           if (err2) return err2;
           this.changeOperand(jumpEndPos, this.currentInstructions().length);
+          this.resetPeepholeState();
+          return null;
+        }
+        if (node.operator === "??") {
+          let err2 = this.compile(node.left);
+          if (err2) return err2;
+          const sym = this.symbolTable.define("__nullish_" + this.currentInstructions().length);
+          this.emit(sym.scope === "GLOBAL" ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal, sym.index);
+          this.loadSymbol(sym);
+          this.emit(Opcodes.OpNull);
+          this.emit(Opcodes.OpEqual);
+          const jumpNotNullPos = this.emit(Opcodes.OpJumpNotTruthy, 65535);
+          err2 = this.compile(node.right);
+          if (err2) return err2;
+          const jumpEndPos2 = this.emit(Opcodes.OpJump, 65535);
+          this.changeOperand(jumpNotNullPos, this.currentInstructions().length);
+          this.resetPeepholeState();
+          this.loadSymbol(sym);
+          this.changeOperand(jumpEndPos2, this.currentInstructions().length);
+          this.resetPeepholeState();
           return null;
         }
         let err = this.compile(node.left);
@@ -2201,9 +2394,11 @@ ${this.body}
         if (err) return err;
         const jumpPos = this.emit(Opcodes.OpJump, 9999);
         this.changeOperand(jumpNotTruthyPos, this.currentInstructions().length);
+        this.resetPeepholeState();
         err = this.compile(node.alternative);
         if (err) return err;
         this.changeOperand(jumpPos, this.currentInstructions().length);
+        this.resetPeepholeState();
       } else if (node instanceof MatchExpression) {
         return this.compileMatchExpression(node);
       } else if (node instanceof TemplateLiteral) {
@@ -2223,6 +2418,7 @@ ${this.body}
       } else if (node instanceof AssignExpression) {
         const sym = this.symbolTable.resolve(node.name.value);
         if (!sym) return `undefined variable: ${node.name.value}`;
+        if (sym.isConst) return `cannot assign to const variable: ${node.name.value}`;
         const err = this.compile(node.value);
         if (err) return err;
         if (sym.scope === "GLOBAL") {
@@ -2301,6 +2497,25 @@ ${this.body}
         err = this.compile(node.index);
         if (err) return err;
         this.emit(Opcodes.OpIndex);
+      } else if (node instanceof OptionalChainExpression) {
+        let err = this.compile(node.left);
+        if (err) return err;
+        const sym = this.symbolTable.define("__optchain_" + this.currentInstructions().length);
+        this.emit(sym.scope === "GLOBAL" ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal, sym.index);
+        this.loadSymbol(sym);
+        this.emit(Opcodes.OpNull);
+        this.emit(Opcodes.OpEqual);
+        const jumpNotNullPos = this.emit(Opcodes.OpJumpNotTruthy, 65535);
+        this.emit(Opcodes.OpNull);
+        const jumpEndPos = this.emit(Opcodes.OpJump, 65535);
+        this.changeOperand(jumpNotNullPos, this.currentInstructions().length);
+        this.resetPeepholeState();
+        this.loadSymbol(sym);
+        err = this.compile(node.index);
+        if (err) return err;
+        this.emit(Opcodes.OpIndex);
+        this.changeOperand(jumpEndPos, this.currentInstructions().length);
+        this.resetPeepholeState();
       } else if (node instanceof FunctionLiteral) {
         return this.compileFunctionLiteral(node);
       } else if (node instanceof CallExpression) {
@@ -2327,6 +2542,7 @@ ${this.body}
       const jumpPos = this.emit(Opcodes.OpJump, 9999);
       const afterConsequence = this.currentInstructions().length;
       this.changeOperand(jumpNotTruthyPos, afterConsequence);
+      this.resetPeepholeState();
       if (!node.alternative) {
         this.emit(Opcodes.OpNull);
       } else {
@@ -2338,6 +2554,7 @@ ${this.body}
       }
       const afterAlternative = this.currentInstructions().length;
       this.changeOperand(jumpPos, afterAlternative);
+      this.resetPeepholeState();
       this.resetIntStack();
       return null;
     }
@@ -2515,6 +2732,7 @@ ${this.body}
         if (err) return err;
         endJumps.push(this.emit(Opcodes.OpJump, 9999));
         this.changeOperand(jumpNotTruthyPos, this.currentInstructions().length);
+        this.resetPeepholeState();
       }
       const lastArm = node.arms[node.arms.length - 1];
       if (lastArm.pattern !== null) {
@@ -2524,6 +2742,7 @@ ${this.body}
       for (const pos of endJumps) {
         this.changeOperand(pos, end);
       }
+      this.resetPeepholeState();
       return null;
     }
     compileFunctionLiteral(node) {
@@ -2701,6 +2920,12 @@ ${this.body}
     }
     lastInstructionIs(op) {
       return this.currentScope().lastInstruction.opcode === op;
+    }
+    resetPeepholeState() {
+      const scope = this.currentScope();
+      scope.lastInstruction = new EmittedInstruction(void 0, 0);
+      scope.previousInstruction = new EmittedInstruction(void 0, 0);
+      scope.intStackDepth = 0;
     }
     removeLastPop() {
       const scope = this.currentScope();
@@ -3469,7 +3694,14 @@ ${this.body}
           } else {
             const varName = this._varNames ? this._varNames.get(irRef) : null;
             if (varName && this._emittedVarIds && this._emittedVarIds.has(irRef)) {
-              localEntries.push(`${slot}: ${varName}`);
+              const irInst = this._currentIr[irRef];
+              if (irInst && this._isRawInt(irInst)) {
+                localEntries.push(`${slot}: __cachedInteger(${varName})`);
+              } else if (irInst && irInst.op === IR.UNBOX_STRING) {
+                localEntries.push(`${slot}: new __MonkeyString(${varName})`);
+              } else {
+                localEntries.push(`${slot}: ${varName}`);
+              }
             }
           }
         }
@@ -3491,7 +3723,14 @@ ${this.body}
           } else {
             const varName = this._varNames ? this._varNames.get(irRef) : null;
             if (varName && this._emittedVarIds && this._emittedVarIds.has(irRef)) {
-              globalEntries.push(`${idx}: ${varName}`);
+              const irInst = this._currentIr[irRef];
+              if (irInst && this._isRawInt(irInst)) {
+                globalEntries.push(`${idx}: __cachedInteger(${varName})`);
+              } else if (irInst && irInst.op === IR.UNBOX_STRING) {
+                globalEntries.push(`${idx}: new __MonkeyString(${varName})`);
+              } else {
+                globalEntries.push(`${idx}: ${varName}`);
+              }
             }
           }
         }
@@ -3801,6 +4040,38 @@ ${this.body}
           hoistedConsts.set(i, inst);
         }
       }
+      const needsSnapshot = /* @__PURE__ */ new Set();
+      {
+        for (let i = 0; i < ir.length; i++) {
+          const inst = ir[i];
+          if (!inst) continue;
+          if (inst.op !== IR.LOAD_GLOBAL && inst.op !== IR.LOAD_LOCAL) continue;
+          const isGlobal = inst.op === IR.LOAD_GLOBAL;
+          const slot = isGlobal ? inst.operands.index : inst.operands.slot;
+          const slotKey = isGlobal ? "g:" + slot : "l:" + slot;
+          const isPromoted = isGlobal ? promotable.globals.has(slot) : promotable.locals.has(slot);
+          if (!isPromoted) continue;
+          for (let j = i + 1; j < ir.length; j++) {
+            const later = ir[j];
+            if (!later) continue;
+            const isStoreToSame = isGlobal && later.op === IR.STORE_GLOBAL && later.operands.index === slot || !isGlobal && later.op === IR.STORE_LOCAL && later.operands.slot === slot;
+            if (isStoreToSame) {
+              for (let k = j + 1; k < ir.length; k++) {
+                const user = ir[k];
+                if (!user) continue;
+                for (const val of Object.values(user.operands)) {
+                  if (val === i) {
+                    needsSnapshot.add(i);
+                    break;
+                  }
+                }
+                if (needsSnapshot.has(i)) break;
+              }
+              break;
+            }
+          }
+        }
+      }
       this.lines.push('"use strict";');
       this.lines.push("let __iterations = 0;");
       for (const [idx, type] of promotable.globals) {
@@ -3923,8 +4194,13 @@ ${this.body}
           case IR.LOAD_LOCAL: {
             const pv = promotedVarNames.get("l:" + inst.operands.slot);
             if (pv) {
-              varNames.set(i, pv);
-              inst._promotedRaw = true;
+              if (needsSnapshot.has(i)) {
+                this.lines.push(`  const ${v} = ${pv};`);
+                inst._promotedRaw = true;
+              } else {
+                varNames.set(i, pv);
+                inst._promotedRaw = true;
+              }
             } else {
               this.lines.push(`  const ${v} = __stack[__bp + ${inst.operands.slot}];`);
             }
@@ -3933,8 +4209,13 @@ ${this.body}
           case IR.LOAD_GLOBAL: {
             const pv = promotedVarNames.get("g:" + inst.operands.index);
             if (pv) {
-              varNames.set(i, pv);
-              inst._promotedRaw = true;
+              if (needsSnapshot.has(i)) {
+                this.lines.push(`  const ${v} = ${pv};`);
+                inst._promotedRaw = true;
+              } else {
+                varNames.set(i, pv);
+                inst._promotedRaw = true;
+              }
             } else {
               this.lines.push(`  const ${v} = __globals[${inst.operands.index}];`);
             }
@@ -8321,6 +8602,53 @@ ${this.body}
     ["type", new MonkeyBuiltin((...args) => {
       if (args.length !== 1) return newError(`wrong number of arguments. got=${args.length}, want=1`);
       return new MonkeyString(args[0].type());
+    })],
+    ["ord", new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || args[0].type() !== OBJ.STRING) return newError("ord requires one string argument");
+      return new MonkeyInteger(args[0].value.charCodeAt(0));
+    })],
+    ["char", new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || args[0].type() !== OBJ.INTEGER) return newError("char requires one integer argument");
+      return new MonkeyString(String.fromCharCode(args[0].value));
+    })],
+    ["abs", new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || args[0].type() !== OBJ.INTEGER) return newError("abs requires one integer argument");
+      return new MonkeyInteger(Math.abs(args[0].value));
+    })],
+    ["upper", new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || args[0].type() !== OBJ.STRING) return newError("upper requires one string argument");
+      return new MonkeyString(args[0].value.toUpperCase());
+    })],
+    ["lower", new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || args[0].type() !== OBJ.STRING) return newError("lower requires one string argument");
+      return new MonkeyString(args[0].value.toLowerCase());
+    })],
+    ["indexOf", new MonkeyBuiltin((...args) => {
+      if (args.length !== 2) return newError(`wrong number of arguments. got=${args.length}, want=2`);
+      if (args[0].type() === OBJ.STRING && args[1].type() === OBJ.STRING) {
+        return new MonkeyInteger(args[0].value.indexOf(args[1].value));
+      }
+      return newError("indexOf requires two string arguments");
+    })],
+    ["startsWith", new MonkeyBuiltin((...args) => {
+      if (args.length !== 2) return newError(`wrong number of arguments. got=${args.length}, want=2`);
+      return nativeBoolToBooleanObject(args[0].value.startsWith(args[1].value));
+    })],
+    ["endsWith", new MonkeyBuiltin((...args) => {
+      if (args.length !== 2) return newError(`wrong number of arguments. got=${args.length}, want=2`);
+      return nativeBoolToBooleanObject(args[0].value.endsWith(args[1].value));
+    })],
+    ["keys", new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || args[0].type() !== OBJ.HASH) return newError("keys requires one hash argument");
+      const arr = [];
+      for (const [, { key }] of args[0].pairs) arr.push(key);
+      return new MonkeyArray(arr);
+    })],
+    ["values", new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || args[0].type() !== OBJ.HASH) return newError("values requires one hash argument");
+      const arr = [];
+      for (const [, { value }] of args[0].pairs) arr.push(value);
+      return new MonkeyArray(arr);
     })]
   ]);
   function newError(msg) {
@@ -8344,7 +8672,7 @@ ${this.body}
     if (node instanceof LetStatement) {
       const val = monkeyEval(node.value, env);
       if (isError(val)) return val;
-      env.set(node.name.value, val);
+      env.set(node.name.value, val, node.isConst);
       return void 0;
     }
     if (node instanceof DestructuringLet) {
@@ -8373,6 +8701,24 @@ ${this.body}
       return evalPrefixExpression(node.operator, right);
     }
     if (node instanceof InfixExpression) {
+      if (node.operator === "&&") {
+        const left2 = monkeyEval(node.left, env);
+        if (isError(left2)) return left2;
+        if (!isTruthy(left2)) return left2;
+        return monkeyEval(node.right, env);
+      }
+      if (node.operator === "||") {
+        const left2 = monkeyEval(node.left, env);
+        if (isError(left2)) return left2;
+        if (isTruthy(left2)) return left2;
+        return monkeyEval(node.right, env);
+      }
+      if (node.operator === "??") {
+        const left2 = monkeyEval(node.left, env);
+        if (isError(left2)) return left2;
+        if (left2 !== NULL && left2 !== void 0) return left2;
+        return monkeyEval(node.right, env);
+      }
       const left = monkeyEval(node.left, env);
       if (isError(left)) return left;
       const right = monkeyEval(node.right, env);
@@ -8421,6 +8767,7 @@ ${this.body}
     }
     if (node instanceof TemplateLiteral) return evalTemplateLiteral(node, env);
     if (node instanceof AssignExpression) {
+      if (env.isConst(node.name.value)) return new MonkeyError(`cannot assign to const variable: ${node.name.value}`);
       const val = monkeyEval(node.value, env);
       if (isError(val)) return val;
       env.set(node.name.value, val);
@@ -8457,6 +8804,10 @@ ${this.body}
         if (i >= 0 && i < obj.elements.length) {
           obj.elements[i] = val;
         }
+      } else if (obj instanceof MonkeyHash) {
+        if (index.fastHashKey) {
+          obj.pairs.set(index.fastHashKey(), { key: index, value: val });
+        }
       }
       return val;
     }
@@ -8488,6 +8839,14 @@ ${this.body}
     if (node instanceof IndexExpression) {
       const left = monkeyEval(node.left, env);
       if (isError(left)) return left;
+      const index = monkeyEval(node.index, env);
+      if (isError(index)) return index;
+      return evalIndexExpression(left, index);
+    }
+    if (node instanceof OptionalChainExpression) {
+      const left = monkeyEval(node.left, env);
+      if (isError(left)) return left;
+      if (left === NULL || left === void 0) return NULL;
       const index = monkeyEval(node.index, env);
       if (isError(index)) return index;
       return evalIndexExpression(left, index);
@@ -8542,9 +8901,18 @@ ${this.body}
     if (left.type() === OBJ.INTEGER && right.type() === OBJ.INTEGER) {
       return evalIntegerInfix(op, left, right);
     }
+    if (op === "*") {
+      if (left.type() === OBJ.STRING && right.type() === OBJ.INTEGER) {
+        const n = right.value;
+        return new MonkeyString(n > 0 ? left.value.repeat(n) : "");
+      }
+      if (left.type() === OBJ.INTEGER && right.type() === OBJ.STRING) {
+        const n = left.value;
+        return new MonkeyString(n > 0 ? right.value.repeat(n) : "");
+      }
+    }
     if (left.type() === OBJ.STRING && right.type() === OBJ.STRING) {
       if (op === "+") return new MonkeyString(left.value + right.value);
-      if (op === "*") return left;
       if (op === "==") return nativeBoolToBooleanObject(left.value === right.value);
       if (op === "!=") return nativeBoolToBooleanObject(left.value !== right.value);
       if (op === "<") return nativeBoolToBooleanObject(left.value < right.value);
@@ -8577,6 +8945,10 @@ ${this.body}
         return nativeBoolToBooleanObject(l < r);
       case ">":
         return nativeBoolToBooleanObject(l > r);
+      case "<=":
+        return nativeBoolToBooleanObject(l <= r);
+      case ">=":
+        return nativeBoolToBooleanObject(l >= r);
       case "==":
         return nativeBoolToBooleanObject(l === r);
       case "!=":
