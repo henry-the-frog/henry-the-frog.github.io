@@ -2270,7 +2270,7 @@ ${this.body}
       this.intStackDepth = 0;
     }
   };
-  var BUILTINS = ["len", "puts", "first", "last", "rest", "push", "split", "join", "trim", "str_contains", "substr", "replace", "int", "str", "type", "upper", "lower", "indexOf", "startsWith", "endsWith", "char", "ord", "keys", "values", "abs", "sort", "reverse", "contains", "sum", "max", "min", "range", "flat", "zip", "enumerate", "Ok", "Err", "is_ok", "is_err", "unwrap"];
+  var BUILTINS = ["len", "puts", "first", "last", "rest", "push", "split", "join", "trim", "str_contains", "substr", "replace", "int", "str", "type", "upper", "lower", "indexOf", "startsWith", "endsWith", "char", "ord", "keys", "values", "abs", "sort", "reverse", "contains", "sum", "max", "min", "range", "flat", "zip", "enumerate", "Ok", "Err", "is_ok", "is_err", "unwrap", "unwrap_or"];
   var Compiler = class _Compiler {
     constructor(symbolTable = null, constants = null) {
       this.constants = constants || [];
@@ -4108,16 +4108,24 @@ ${this.body}
         IR.LOOP_END,
         IR.CONST_INT,
         IR.CONST_BOOL,
+        IR.CONST_STRING,
+        IR.CONST_NULL,
         IR.LOAD_GLOBAL,
         IR.STORE_GLOBAL,
         IR.LOAD_LOCAL,
         IR.STORE_LOCAL,
+        IR.LOAD_FREE,
+        IR.STORE_FREE,
         IR.GUARD_INT,
         IR.GUARD_BOOL,
         IR.GUARD_TRUTHY,
         IR.GUARD_FALSY,
+        IR.GUARD_STRING,
+        IR.GUARD_ARRAY,
         IR.UNBOX_INT,
         IR.BOX_INT,
+        IR.UNBOX_STRING,
+        IR.BOX_STRING,
         IR.ADD_INT,
         IR.SUB_INT,
         IR.MUL_INT,
@@ -4127,8 +4135,15 @@ ${this.body}
         IR.LT,
         IR.EQ,
         IR.NEQ,
+        IR.GTE,
+        IR.LTE,
         IR.NEG,
-        IR.NOT
+        IR.NOT,
+        IR.CONCAT,
+        IR.INDEX,
+        IR.HASH_LOOKUP,
+        IR.CALL,
+        IR.CALL_BUILTIN
       ]);
       for (const inst of ir) {
         if (!inst) continue;
@@ -7431,6 +7446,12 @@ ${this.body}
       if (!(args[0] instanceof MonkeyResult)) return new MonkeyError("unwrap requires a Result");
       if (!args[0].isOk) return new MonkeyError("unwrap called on Err: " + args[0].value.inspect());
       return args[0].value;
+    }),
+    // unwrap_or: Result, default → value (Ok value or default)
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 2) return new MonkeyError(`wrong number of arguments. got=${args.length}, want=2`);
+      if (!(args[0] instanceof MonkeyResult)) return args[0];
+      return args[0].isOk ? args[0].value : args[1];
     })
   ];
   var VM = class _VM {
