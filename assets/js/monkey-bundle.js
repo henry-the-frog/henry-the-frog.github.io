@@ -2132,7 +2132,7 @@ ${this.body}
       this.intStackDepth = 0;
     }
   };
-  var BUILTINS = ["len", "puts", "first", "last", "rest", "push", "split", "join", "trim", "str_contains", "substr", "replace", "int", "str", "type", "upper", "lower", "indexOf", "startsWith", "endsWith", "char", "ord", "keys", "values", "abs", "sort", "reverse", "contains", "sum", "max", "min"];
+  var BUILTINS = ["len", "puts", "first", "last", "rest", "push", "split", "join", "trim", "str_contains", "substr", "replace", "int", "str", "type", "upper", "lower", "indexOf", "startsWith", "endsWith", "char", "ord", "keys", "values", "abs", "sort", "reverse", "contains", "sum", "max", "min", "range", "flat", "zip", "enumerate"];
   var Compiler = class _Compiler {
     constructor(symbolTable = null, constants = null) {
       this.constants = constants || [];
@@ -7115,6 +7115,57 @@ ${this.body}
         if (el instanceof MonkeyInteger && el.value < m) m = el.value;
       }
       return m === Infinity ? NULL : cachedInteger(m);
+    }),
+    // range — range(n) or range(start, end) or range(start, end, step)
+    new MonkeyBuiltin((...args) => {
+      if (args.length < 1 || args.length > 3) return new MonkeyError(`wrong number of arguments. got=${args.length}, want=1-3`);
+      let start = 0, end, step = 1;
+      if (args.length === 1) {
+        end = args[0].value;
+      } else {
+        start = args[0].value;
+        end = args[1].value;
+        if (args.length === 3) step = args[2].value;
+      }
+      const result = [];
+      if (step > 0) {
+        for (let i = start; i < end; i += step) result.push(cachedInteger(i));
+      } else if (step < 0) {
+        for (let i = start; i > end; i += step) result.push(cachedInteger(i));
+      }
+      return new MonkeyArray(result);
+    }),
+    // flat — flatten one level
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || !(args[0] instanceof MonkeyArray))
+        return new MonkeyError(`argument to \`flat\` must be ARRAY`);
+      const result = [];
+      for (const el of args[0].elements) {
+        if (el instanceof MonkeyArray) result.push(...el.elements);
+        else result.push(el);
+      }
+      return new MonkeyArray(result);
+    }),
+    // zip — zip two arrays into pairs
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 2 || !(args[0] instanceof MonkeyArray) || !(args[1] instanceof MonkeyArray))
+        return new MonkeyError(`zip requires two ARRAY arguments`);
+      const len = Math.min(args[0].elements.length, args[1].elements.length);
+      const result = [];
+      for (let i = 0; i < len; i++) {
+        result.push(new MonkeyArray([args[0].elements[i], args[1].elements[i]]));
+      }
+      return new MonkeyArray(result);
+    }),
+    // enumerate — returns [[0, el0], [1, el1], ...]
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || !(args[0] instanceof MonkeyArray))
+        return new MonkeyError(`argument to \`enumerate\` must be ARRAY`);
+      const result = [];
+      for (let i = 0; i < args[0].elements.length; i++) {
+        result.push(new MonkeyArray([cachedInteger(i), args[0].elements[i]]));
+      }
+      return new MonkeyArray(result);
     })
   ];
   var VM = class _VM {
@@ -8857,6 +8908,46 @@ ${this.body}
         if (el instanceof MonkeyInteger && el.value < m) m = el.value;
       }
       return m === Infinity ? NULL : new MonkeyInteger(m);
+    })],
+    ["range", new MonkeyBuiltin((...args) => {
+      let start = 0, end, step = 1;
+      if (args.length === 1) {
+        end = args[0].value;
+      } else if (args.length === 2) {
+        start = args[0].value;
+        end = args[1].value;
+      } else if (args.length === 3) {
+        start = args[0].value;
+        end = args[1].value;
+        step = args[2].value;
+      } else return newError("range requires 1-3 arguments");
+      const result = [];
+      if (step > 0) for (let i = start; i < end; i += step) result.push(new MonkeyInteger(i));
+      else if (step < 0) for (let i = start; i > end; i += step) result.push(new MonkeyInteger(i));
+      return new MonkeyArray(result);
+    })],
+    ["flat", new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || !(args[0] instanceof MonkeyArray)) return newError("flat requires one array argument");
+      const result = [];
+      for (const el of args[0].elements) {
+        if (el instanceof MonkeyArray) result.push(...el.elements);
+        else result.push(el);
+      }
+      return new MonkeyArray(result);
+    })],
+    ["zip", new MonkeyBuiltin((...args) => {
+      if (args.length !== 2 || !(args[0] instanceof MonkeyArray) || !(args[1] instanceof MonkeyArray))
+        return newError("zip requires two array arguments");
+      const len = Math.min(args[0].elements.length, args[1].elements.length);
+      const result = [];
+      for (let i = 0; i < len; i++) result.push(new MonkeyArray([args[0].elements[i], args[1].elements[i]]));
+      return new MonkeyArray(result);
+    })],
+    ["enumerate", new MonkeyBuiltin((...args) => {
+      if (args.length !== 1 || !(args[0] instanceof MonkeyArray)) return newError("enumerate requires one array argument");
+      const result = [];
+      for (let i = 0; i < args[0].elements.length; i++) result.push(new MonkeyArray([new MonkeyInteger(i), args[0].elements[i]]));
+      return new MonkeyArray(result);
     })]
   ]);
   function newError(msg) {
