@@ -851,6 +851,15 @@ var Monkey = (() => {
       return "match { ... }";
     }
   };
+  var TypePattern = class {
+    constructor(typeName, binding) {
+      this.typeName = typeName;
+      this.binding = binding;
+    }
+    toString() {
+      return `${this.typeName}(${this.binding.value})`;
+    }
+  };
   var DestructuringLet = class {
     constructor(token, names, value) {
       this.token = token;
@@ -862,6 +871,19 @@ var Monkey = (() => {
     }
     toString() {
       return `let [${this.names.map((n) => n ? n.value : "_").join(", ")}] = ...`;
+    }
+  };
+  var HashDestructuringLet = class {
+    constructor(token, names, value) {
+      this.token = token;
+      this.names = names;
+      this.value = value;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return `let {${this.names.map((n) => n.value).join(", ")}} = ...`;
     }
   };
   var DoWhileExpression = class {
@@ -1066,6 +1088,9 @@ var Monkey = (() => {
       if (this.peekTokenIs(TokenType.LBRACKET)) {
         return this.parseDestructuringLet(token);
       }
+      if (this.peekTokenIs(TokenType.LBRACE)) {
+        return this.parseHashDestructuringLet(token);
+      }
       if (!this.expectPeek(TokenType.IDENT)) return null;
       const name = new Identifier(this.curToken, this.curToken.literal);
       if (!this.expectPeek(TokenType.ASSIGN)) return null;
@@ -1096,6 +1121,25 @@ var Monkey = (() => {
       const value = this.parseExpression(Precedence.LOWEST);
       if (this.peekTokenIs(TokenType.SEMICOLON)) this.nextToken();
       return new DestructuringLet(token, names, value);
+    }
+    parseHashDestructuringLet(token) {
+      this.nextToken();
+      const names = [];
+      if (!this.peekTokenIs(TokenType.RBRACE)) {
+        this.nextToken();
+        names.push(new Identifier(this.curToken, this.curToken.literal));
+        while (this.peekTokenIs(TokenType.COMMA)) {
+          this.nextToken();
+          this.nextToken();
+          names.push(new Identifier(this.curToken, this.curToken.literal));
+        }
+      }
+      if (!this.expectPeek(TokenType.RBRACE)) return null;
+      if (!this.expectPeek(TokenType.ASSIGN)) return null;
+      this.nextToken();
+      const value = this.parseExpression(Precedence.LOWEST);
+      if (this.peekTokenIs(TokenType.SEMICOLON)) this.nextToken();
+      return new HashDestructuringLet(token, names, value);
     }
     parseReturnStatement() {
       const token = this.curToken;
@@ -1528,11 +1572,19 @@ var Monkey = (() => {
       if (!this.expectPeek(TokenType.RPAREN)) return null;
       if (!this.expectPeek(TokenType.LBRACE)) return null;
       const arms = [];
+      const TYPE_NAMES = /* @__PURE__ */ new Set(["int", "string", "bool", "array", "hash", "fn", "null"]);
       while (!this.peekTokenIs(TokenType.RBRACE) && !this.peekTokenIs(TokenType.EOF)) {
         this.nextToken();
         let pattern = null;
         if (this.curTokenIs(TokenType.IDENT) && this.curToken.literal === "_") {
           pattern = null;
+        } else if ((this.curTokenIs(TokenType.IDENT) || this.curTokenIs(TokenType.FUNCTION)) && TYPE_NAMES.has(this.curToken.literal) && this.peekTokenIs(TokenType.LPAREN)) {
+          const typeName = this.curToken.literal;
+          this.nextToken();
+          this.nextToken();
+          const binding = new Identifier(this.curToken, this.curToken.literal);
+          if (!this.expectPeek(TokenType.RPAREN)) return null;
+          pattern = new TypePattern(typeName, binding);
         } else {
           pattern = this.parseExpression(Precedence.LOWEST);
         }
@@ -1746,8 +1798,10 @@ var Monkey = (() => {
     // Set element at index: arr[i] = val
     OpSlice: 55,
     // Slice: arr[start:end]
-    OpTypeCheck: 56
+    OpTypeCheck: 56,
     // Type check: local(1) typeConstIdx(2) — validates param type
+    OpTypeIs: 57
+    // Type check: pops value, pushes bool (typeConstIdx(2))
   };
   var definitions = {
     [Opcodes.OpConstant]: ["OpConstant", 2],
@@ -1805,8 +1859,10 @@ var Monkey = (() => {
     [Opcodes.OpSetFree]: ["OpSetFree", 1],
     [Opcodes.OpSetIndex]: ["OpSetIndex"],
     [Opcodes.OpSlice]: ["OpSlice"],
-    [Opcodes.OpTypeCheck]: ["OpTypeCheck", 1, 2]
+    [Opcodes.OpTypeCheck]: ["OpTypeCheck", 1, 2],
     // localSlot (1), typeNameConstIdx (2)
+    [Opcodes.OpTypeIs]: ["OpTypeIs", 2]
+    // typeNameConstIdx (2) — pops value, pushes bool
   };
   function lookup(op) {
     const def = definitions[op];
@@ -1939,7 +1995,7 @@ var Monkey = (() => {
       return this.value;
     }
   };
-  var MonkeyBoolean = class {
+  var MonkeyBoolean2 = class {
     constructor(value) {
       this.value = value;
     }
@@ -2096,8 +2152,8 @@ ${this.body}
       return val;
     }
   };
-  var TRUE = new MonkeyBoolean(true);
-  var FALSE = new MonkeyBoolean(false);
+  var TRUE = new MonkeyBoolean2(true);
+  var FALSE = new MonkeyBoolean2(false);
   var NULL = new MonkeyNull();
   var INT_CACHE_MIN = -1;
   var INT_CACHE_MAX = 256;
@@ -2271,6 +2327,19 @@ ${this.body}
           this.emit(Opcodes.OpConstant, idxConst);
           this.emit(Opcodes.OpIndex);
           const dsym = this.symbolTable.define(node.names[i].value);
+          this.emit(dsym.scope === SCOPE.GLOBAL ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal, dsym.index);
+        }
+      } else if (node instanceof HashDestructuringLet) {
+        const err2 = this.compile(node.value);
+        if (err2) return err2;
+        const tempSym = this.symbolTable.define("__hdestruct_" + this.currentInstructions().length);
+        this.emit(tempSym.scope === SCOPE.GLOBAL ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal, tempSym.index);
+        for (const name of node.names) {
+          this.loadSymbol(tempSym);
+          const keyConst = this.addConstant(internString(name.value));
+          this.emit(Opcodes.OpConstant, keyConst);
+          this.emit(Opcodes.OpIndex);
+          const dsym = this.symbolTable.define(name.value);
           this.emit(dsym.scope === SCOPE.GLOBAL ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal, dsym.index);
         }
       } else if (node instanceof ReturnStatement) {
@@ -2836,6 +2905,21 @@ ${this.body}
           err = this.compile(arm.value);
           if (err) return err;
           break;
+        }
+        if (arm.pattern instanceof TypePattern) {
+          this.loadSymbol(subjectSym);
+          const typeConst = this.addConstant(arm.pattern.typeName);
+          this.emit(Opcodes.OpTypeIs, typeConst);
+          const jumpNotTruthyPos2 = this.emit(Opcodes.OpJumpNotTruthy, 9999);
+          this.loadSymbol(subjectSym);
+          const bindSym = this.symbolTable.define(arm.pattern.binding.value);
+          this.emit(bindSym.scope === "GLOBAL" ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal, bindSym.index);
+          err = this.compile(arm.value);
+          if (err) return err;
+          endJumps.push(this.emit(Opcodes.OpJump, 9999));
+          this.changeOperand(jumpNotTruthyPos2, this.currentInstructions().length);
+          this.resetPeepholeState();
+          continue;
         }
         this.loadSymbol(subjectSym);
         err = this.compile(arm.pattern);
@@ -3444,7 +3528,7 @@ ${this.body}
         this.typeMap.set(ref, "int");
         this.trace.guardCount++;
         return "int";
-      } else if (value instanceof MonkeyBoolean) {
+      } else if (value instanceof MonkeyBoolean2) {
         const gid = this.addGuardInst(IR.GUARD_BOOL, { ref, exitIp });
         this.typeMap.set(ref, "bool");
         this.trace.guardCount++;
@@ -6180,7 +6264,7 @@ ${this.body}
             const constVal = this.constants[constIdx];
             if (constVal instanceof MonkeyInteger) {
               lines.push(`__s[__sp++] = __cachedInteger(${constVal.value});`);
-            } else if (constVal instanceof MonkeyBoolean) {
+            } else if (constVal instanceof MonkeyBoolean2) {
               lines.push(`__s[__sp++] = ${constVal.value ? "__TRUE" : "__FALSE"};`);
             } else {
               lines.push(`__s[__sp++] = __consts[${constIdx}];`);
@@ -6396,7 +6480,7 @@ ${this.body}
               const constVal = this.constants[constIdx];
               if (constVal instanceof MonkeyInteger) {
                 lines.push(`      __s[__sp++] = __cachedInteger(${constVal.value});`);
-              } else if (constVal instanceof MonkeyBoolean) {
+              } else if (constVal instanceof MonkeyBoolean2) {
                 lines.push(`      __s[__sp++] = ${constVal.value ? "__TRUE" : "__FALSE"};`);
               } else {
                 lines.push(`      __s[__sp++] = __consts[${constIdx}];`);
@@ -6648,7 +6732,7 @@ ${this.body}
       }
       for (const idx of referencedConsts) {
         const c = this.constants[idx];
-        if (c instanceof MonkeyInteger || c instanceof MonkeyBoolean) continue;
+        if (c instanceof MonkeyInteger || c instanceof MonkeyBoolean2) continue;
         return false;
       }
       return true;
@@ -6711,7 +6795,7 @@ ${this.body}
               const constVal = this.constants[constIdx];
               if (constVal instanceof MonkeyInteger) {
                 lines.push(`        __s[__sp++] = ${constVal.value};`);
-              } else if (constVal instanceof MonkeyBoolean) {
+              } else if (constVal instanceof MonkeyBoolean2) {
                 lines.push(`        __s[__sp++] = ${constVal.value};`);
               } else {
                 return null;
@@ -7476,7 +7560,7 @@ ${this.body}
                   break;
               }
               this.push(result ? TRUE : FALSE);
-            } else if (left2 instanceof MonkeyBoolean && right2 instanceof MonkeyBoolean) {
+            } else if (left2 instanceof MonkeyBoolean2 && right2 instanceof MonkeyBoolean2) {
               if (recording()) {
                 this._abortRecording();
               }
@@ -8119,7 +8203,7 @@ ${this.body}
                 ok = val instanceof MonkeyInteger;
                 break;
               case "bool":
-                ok = val instanceof MonkeyBoolean;
+                ok = val instanceof MonkeyBoolean2;
                 break;
               case "string":
                 ok = val instanceof MonkeyString;
@@ -8146,6 +8230,43 @@ ${this.body}
             if (recording()) {
               const absSlot = this.recorder.currentBaseOffset() + localIdx;
               this.recorder.trustedTypes.set(absSlot, typeName);
+            }
+            break;
+          }
+          case Opcodes.OpTypeIs: {
+            const typeIdx8 = ins[ip + 1] << 8 | ins[ip + 2];
+            frame.ip += 2;
+            const val8 = this.pop();
+            const typeName8 = this.constants[typeIdx8];
+            let ok8 = false;
+            switch (typeName8) {
+              case "int":
+                ok8 = val8 instanceof MonkeyInteger;
+                break;
+              case "bool":
+                ok8 = val8 instanceof MonkeyBoolean2;
+                break;
+              case "string":
+                ok8 = val8 instanceof MonkeyString;
+                break;
+              case "array":
+                ok8 = val8 instanceof MonkeyArray;
+                break;
+              case "hash":
+                ok8 = val8 instanceof MonkeyHash;
+                break;
+              case "fn":
+                ok8 = val8 instanceof Closure || val8 instanceof MonkeyFunction || val8 instanceof MonkeyBuiltin;
+                break;
+              case "null":
+                ok8 = val8 === NULL;
+                break;
+              default:
+                ok8 = false;
+            }
+            this.push(ok8 ? TRUE : FALSE);
+            if (recording()) {
+              this.recorder.abort("OpTypeIs not JIT-compiled");
             }
             break;
           }
@@ -8506,7 +8627,7 @@ ${this.body}
                 ok7 = val7 instanceof MonkeyInteger;
                 break;
               case "bool":
-                ok7 = val7 instanceof MonkeyBoolean;
+                ok7 = val7 instanceof MonkeyBoolean2;
                 break;
               case "string":
                 ok7 = val7 instanceof MonkeyString;
@@ -8532,13 +8653,47 @@ ${this.body}
             }
             break;
           }
+          case Opcodes.OpTypeIs: {
+            const typeIdx9 = ins[ip + 1] << 8 | ins[ip + 2];
+            frame.ip += 2;
+            const val9 = this.stack[--this.sp];
+            const typeName9 = this.constants[typeIdx9];
+            let ok9 = false;
+            switch (typeName9) {
+              case "int":
+                ok9 = val9 instanceof MonkeyInteger;
+                break;
+              case "bool":
+                ok9 = val9 instanceof MonkeyBoolean2;
+                break;
+              case "string":
+                ok9 = val9 instanceof MonkeyString;
+                break;
+              case "array":
+                ok9 = val9 instanceof MonkeyArray;
+                break;
+              case "hash":
+                ok9 = val9 instanceof MonkeyHash;
+                break;
+              case "fn":
+                ok9 = val9 instanceof Closure || val9 instanceof MonkeyFunction || val9 instanceof MonkeyBuiltin;
+                break;
+              case "null":
+                ok9 = val9 === NULL;
+                break;
+              default:
+                ok9 = false;
+            }
+            this.stack[this.sp++] = ok9 ? TRUE : FALSE;
+            break;
+          }
           default:
             throw new Error(`unknown opcode: ${op}`);
         }
       }
     }
     isTruthy(obj) {
-      if (obj instanceof MonkeyBoolean) return obj.value;
+      if (obj instanceof MonkeyBoolean2) return obj.value;
       if (obj === NULL) return false;
       return true;
     }
@@ -8582,7 +8737,7 @@ ${this.body}
           allConsts,
           frame.closure.free,
           MonkeyInteger,
-          MonkeyBoolean,
+          MonkeyBoolean2,
           MonkeyString,
           MonkeyArray,
           TRUE,
@@ -8686,7 +8841,7 @@ ${this.body}
           allConsts,
           closure.free,
           MonkeyInteger,
-          MonkeyBoolean,
+          MonkeyBoolean2,
           MonkeyString,
           TRUE,
           FALSE,
@@ -8706,7 +8861,7 @@ ${this.body}
           allConsts,
           closure.free,
           MonkeyInteger,
-          MonkeyBoolean,
+          MonkeyBoolean2,
           MonkeyString,
           TRUE,
           FALSE,
@@ -8725,7 +8880,7 @@ ${this.body}
         allConsts,
         closure.free,
         MonkeyInteger,
-        MonkeyBoolean,
+        MonkeyBoolean2,
         MonkeyString,
         TRUE,
         FALSE,
@@ -8754,7 +8909,7 @@ ${this.body}
         allConsts,
         frame.closure.free,
         MonkeyInteger,
-        MonkeyBoolean,
+        MonkeyBoolean2,
         MonkeyString,
         MonkeyArray,
         TRUE,
@@ -8796,7 +8951,7 @@ ${this.body}
             const ref = trace.addInst(IR.CONST_INT, { value: value.value });
             r.typeMap.set(ref, "raw_int");
             r.pushRef(ref);
-          } else if (value instanceof MonkeyBoolean) {
+          } else if (value instanceof MonkeyBoolean2) {
             const ref = trace.addInst(IR.CONST_BOOL, { value: value.value });
             r.typeMap.set(ref, "bool");
             r.pushRef(ref);
@@ -8856,7 +9011,7 @@ ${this.body}
         const ref = trace.addInst(IR.CONST_INT, { value: value.value });
         r.typeMap.set(ref, "raw_int");
         r.pushRef(ref);
-      } else if (value instanceof MonkeyBoolean) {
+      } else if (value instanceof MonkeyBoolean2) {
         const ref = trace.addInst(IR.CONST_BOOL, { value: value.value });
         r.typeMap.set(ref, "bool");
         r.pushRef(ref);
@@ -9136,6 +9291,19 @@ ${this.body}
       }
       return void 0;
     }
+    if (node instanceof HashDestructuringLet) {
+      const val = monkeyEval(node.value, env);
+      if (isError(val)) return val;
+      if (val instanceof MonkeyHash) {
+        for (const name of node.names) {
+          const key = internString(name.value);
+          const hashKey = key.hashKey();
+          const pair = val.pairs.get(hashKey);
+          env.set(name.value, pair ? pair.value : NULL);
+        }
+      }
+      return void 0;
+    }
     if (node instanceof ReturnStatement) {
       const val = monkeyEval(node.returnValue, env);
       if (isError(val)) return val;
@@ -9205,6 +9373,39 @@ ${this.body}
       for (const arm of node.arms) {
         if (arm.pattern === null) {
           return monkeyEval(arm.value, env);
+        }
+        if (arm.pattern instanceof TypePattern) {
+          const typeName = arm.pattern.typeName;
+          let matches = false;
+          switch (typeName) {
+            case "int":
+              matches = subject instanceof MonkeyInteger;
+              break;
+            case "string":
+              matches = subject instanceof MonkeyString;
+              break;
+            case "bool":
+              matches = subject instanceof MonkeyBoolean;
+              break;
+            case "array":
+              matches = subject instanceof MonkeyArray;
+              break;
+            case "hash":
+              matches = subject instanceof MonkeyHash;
+              break;
+            case "fn":
+              matches = subject instanceof MonkeyFunction2;
+              break;
+            case "null":
+              matches = subject === NULL;
+              break;
+          }
+          if (matches) {
+            const innerEnv = new Environment(env);
+            innerEnv.set(arm.pattern.binding.value, subject);
+            return monkeyEval(arm.value, innerEnv);
+          }
+          continue;
         }
         const pattern = monkeyEval(arm.pattern, env);
         if (isError(pattern)) return pattern;
