@@ -599,6 +599,7 @@ var Monkey = (() => {
       this.token = token;
       this.parameters = parameters;
       this.body = body;
+      this.restParam = null;
     }
     tokenLiteral() {
       return this.token.literal;
@@ -1398,21 +1399,29 @@ var Monkey = (() => {
     parseFunctionLiteral() {
       const token = this.curToken;
       if (!this.expectPeek(TokenType.LPAREN)) return null;
-      const { params: parameters, defaults } = this.parseFunctionParameters();
+      const { params: parameters, defaults, restParam } = this.parseFunctionParameters();
       if (!this.expectPeek(TokenType.LBRACE)) return null;
       const body = this.parseBlockStatement();
       const fn = new FunctionLiteral(token, parameters, body);
       fn.defaults = defaults;
+      fn.restParam = restParam;
       return fn;
     }
     parseFunctionParameters() {
       const params = [];
       const defaults = [];
+      let restParam = null;
       if (this.peekTokenIs(TokenType.RPAREN)) {
         this.nextToken();
-        return { params, defaults };
+        return { params, defaults, restParam };
       }
       this.nextToken();
+      if (this.curToken.type === TokenType.SPREAD) {
+        this.nextToken();
+        restParam = new Identifier(this.curToken, this.curToken.literal);
+        if (!this.expectPeek(TokenType.RPAREN)) return null;
+        return { params, defaults, restParam };
+      }
       params.push(new Identifier(this.curToken, this.curToken.literal));
       if (this.peekTokenIs(TokenType.ASSIGN)) {
         this.nextToken();
@@ -1424,6 +1433,11 @@ var Monkey = (() => {
       while (this.peekTokenIs(TokenType.COMMA)) {
         this.nextToken();
         this.nextToken();
+        if (this.curToken.type === TokenType.SPREAD) {
+          this.nextToken();
+          restParam = new Identifier(this.curToken, this.curToken.literal);
+          break;
+        }
         params.push(new Identifier(this.curToken, this.curToken.literal));
         if (this.peekTokenIs(TokenType.ASSIGN)) {
           this.nextToken();
@@ -1434,7 +1448,7 @@ var Monkey = (() => {
         }
       }
       if (!this.expectPeek(TokenType.RPAREN)) return null;
-      return { params, defaults };
+      return { params, defaults, restParam };
     }
     parseCallExpression(fn) {
       const token = this.curToken;
@@ -2083,10 +2097,12 @@ ${this.body}
   // src/compiler.js
   var _cfId = 0;
   var CompiledFunction = class {
-    constructor(instructions, numLocals = 0, numParameters = 0) {
+    constructor(instructions, numLocals = 0, numParameters = 0, hasRestParam = false) {
       this.id = _cfId++;
       this.instructions = instructions;
       this.numLocals = numLocals;
+      this.numParameters = numParameters;
+      this.hasRestParam = hasRestParam;
       this.numParameters = numParameters;
     }
     type() {
@@ -2813,6 +2829,10 @@ ${this.body}
       for (const param of node.parameters) {
         this.symbolTable.define(param.value);
       }
+      const hasRestParam = !!node.restParam;
+      if (hasRestParam) {
+        this.symbolTable.define(node.restParam.value);
+      }
       if (node.defaults) {
         for (let i = 0; i < node.defaults.length; i++) {
           if (node.defaults[i] !== null) {
@@ -2842,7 +2862,7 @@ ${this.body}
       for (const sym of freeSymbols) {
         this.loadSymbol(sym);
       }
-      const fn = new CompiledFunction(instructions, numLocals, node.parameters.length);
+      const fn = new CompiledFunction(instructions, numLocals, node.parameters.length, hasRestParam);
       const idx = this.addConstant(fn);
       this.emit(Opcodes.OpClosure, idx, freeSymbols.length);
       return null;
@@ -7575,7 +7595,30 @@ ${this.body}
             frame.ip += 1;
             const callee = this.stack[this.sp - 1 - numArgs];
             if (callee instanceof Closure) {
-              if (numArgs > callee.fn.numParameters) {
+              if (callee.fn.hasRestParam) {
+                const requiredParams = callee.fn.numParameters;
+                const closurePos = this.sp - 1 - numArgs;
+                const bp = closurePos + 1;
+                if (numArgs < requiredParams) {
+                  for (let i = numArgs; i < requiredParams; i++) {
+                    this.stack[bp + i] = NULL;
+                  }
+                  this.stack[bp + requiredParams] = new MonkeyArray([]);
+                  this.sp = bp + requiredParams + 1;
+                } else {
+                  const restElements = [];
+                  for (let i = requiredParams; i < numArgs; i++) {
+                    restElements.push(this.stack[bp + i]);
+                  }
+                  this.stack[bp + requiredParams] = new MonkeyArray(restElements);
+                  this.sp = bp + requiredParams + 1;
+                }
+                const callFrame2 = new Frame(callee, bp);
+                this.pushFrame(callFrame2);
+                this.sp = callFrame2.basePointer + callee.fn.numLocals;
+                frame = callFrame2;
+                break;
+              } else if (numArgs > callee.fn.numParameters) {
                 throw new Error(`wrong number of arguments: want=${callee.fn.numParameters}, got=${numArgs}`);
               }
               const missingArgs = callee.fn.numParameters - numArgs;
