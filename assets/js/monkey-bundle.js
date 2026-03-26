@@ -1597,7 +1597,7 @@ var Monkey = (() => {
       if (!this.expectPeek(TokenType.RPAREN)) return null;
       if (!this.expectPeek(TokenType.LBRACE)) return null;
       const arms = [];
-      const TYPE_NAMES = /* @__PURE__ */ new Set(["int", "string", "bool", "array", "hash", "fn", "null"]);
+      const TYPE_NAMES = /* @__PURE__ */ new Set(["int", "string", "bool", "array", "hash", "fn", "null", "Ok", "Err"]);
       while (!this.peekTokenIs(TokenType.RBRACE) && !this.peekTokenIs(TokenType.EOF)) {
         this.nextToken();
         let pattern = null;
@@ -1825,8 +1825,10 @@ var Monkey = (() => {
     // Slice: arr[start:end]
     OpTypeCheck: 56,
     // Type check: local(1) typeConstIdx(2) — validates param type
-    OpTypeIs: 57
+    OpTypeIs: 57,
     // Type check: pops value, pushes bool (typeConstIdx(2))
+    OpResultValue: 58
+    // Pop Result, push its inner .value
   };
   var definitions = {
     [Opcodes.OpConstant]: ["OpConstant", 2],
@@ -1886,8 +1888,10 @@ var Monkey = (() => {
     [Opcodes.OpSlice]: ["OpSlice"],
     [Opcodes.OpTypeCheck]: ["OpTypeCheck", 1, 2],
     // localSlot (1), typeNameConstIdx (2)
-    [Opcodes.OpTypeIs]: ["OpTypeIs", 2]
+    [Opcodes.OpTypeIs]: ["OpTypeIs", 2],
     // typeNameConstIdx (2) — pops value, pushes bool
+    [Opcodes.OpResultValue]: ["OpResultValue"]
+    // Pop Result, push its .value
   };
   function lookup(op) {
     const def = definitions[op];
@@ -2212,6 +2216,21 @@ ${this.body}
       return "continue";
     }
   };
+  var MonkeyResult = class {
+    constructor(isOk, value) {
+      this.isOk = isOk;
+      this.value = value;
+    }
+    type() {
+      return "RESULT";
+    }
+    inspect() {
+      return this.isOk ? `Ok(${this.value.inspect()})` : `Err(${this.value.inspect()})`;
+    }
+    fastHashKey() {
+      return `result:${this.isOk}:${this.value.inspect()}`;
+    }
+  };
 
   // src/compiler.js
   var _cfId = 0;
@@ -2251,7 +2270,7 @@ ${this.body}
       this.intStackDepth = 0;
     }
   };
-  var BUILTINS = ["len", "puts", "first", "last", "rest", "push", "split", "join", "trim", "str_contains", "substr", "replace", "int", "str", "type", "upper", "lower", "indexOf", "startsWith", "endsWith", "char", "ord", "keys", "values", "abs", "sort", "reverse", "contains", "sum", "max", "min", "range", "flat", "zip", "enumerate"];
+  var BUILTINS = ["len", "puts", "first", "last", "rest", "push", "split", "join", "trim", "str_contains", "substr", "replace", "int", "str", "type", "upper", "lower", "indexOf", "startsWith", "endsWith", "char", "ord", "keys", "values", "abs", "sort", "reverse", "contains", "sum", "max", "min", "range", "flat", "zip", "enumerate", "Ok", "Err", "is_ok", "is_err", "unwrap"];
   var Compiler = class _Compiler {
     constructor(symbolTable = null, constants = null) {
       this.constants = constants || [];
@@ -2969,7 +2988,12 @@ ${this.body}
           const typeConst = this.addConstant(arm.pattern.typeName);
           this.emit(Opcodes.OpTypeIs, typeConst);
           const jumpNotTruthyPos2 = this.emit(Opcodes.OpJumpNotTruthy, 9999);
-          this.loadSymbol(subjectSym);
+          if (arm.pattern.typeName === "Ok" || arm.pattern.typeName === "Err") {
+            this.loadSymbol(subjectSym);
+            this.emit(Opcodes.OpResultValue);
+          } else {
+            this.loadSymbol(subjectSym);
+          }
           const bindSym = this.symbolTable.define(arm.pattern.binding.value);
           this.emit(bindSym.scope === "GLOBAL" ? Opcodes.OpSetGlobal : Opcodes.OpSetLocal, bindSym.index);
           err = this.compile(arm.value);
@@ -7378,6 +7402,35 @@ ${this.body}
         result.push(new MonkeyArray([cachedInteger(i), args[0].elements[i]]));
       }
       return new MonkeyArray(result);
+    }),
+    // Ok
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 1) return new MonkeyError(`wrong number of arguments. got=${args.length}, want=1`);
+      return new MonkeyResult(true, args[0]);
+    }),
+    // Err
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 1) return new MonkeyError(`wrong number of arguments. got=${args.length}, want=1`);
+      return new MonkeyResult(false, args[0]);
+    }),
+    // is_ok
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 1) return new MonkeyError(`wrong number of arguments. got=${args.length}, want=1`);
+      if (!(args[0] instanceof MonkeyResult)) return FALSE;
+      return args[0].isOk ? TRUE : FALSE;
+    }),
+    // is_err
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 1) return new MonkeyError(`wrong number of arguments. got=${args.length}, want=1`);
+      if (!(args[0] instanceof MonkeyResult)) return FALSE;
+      return args[0].isOk ? FALSE : TRUE;
+    }),
+    // unwrap
+    new MonkeyBuiltin((...args) => {
+      if (args.length !== 1) return new MonkeyError(`wrong number of arguments. got=${args.length}, want=1`);
+      if (!(args[0] instanceof MonkeyResult)) return new MonkeyError("unwrap requires a Result");
+      if (!args[0].isOk) return new MonkeyError("unwrap called on Err: " + args[0].value.inspect());
+      return args[0].value;
     })
   ];
   var VM = class _VM {
@@ -8296,6 +8349,12 @@ ${this.body}
               case "null":
                 ok = val === NULL;
                 break;
+              case "Ok":
+                ok = val instanceof MonkeyResult && val.isOk;
+                break;
+              case "Err":
+                ok = val instanceof MonkeyResult && !val.isOk;
+                break;
               default:
                 ok = true;
             }
@@ -8337,12 +8396,27 @@ ${this.body}
               case "null":
                 ok8 = val8 === NULL;
                 break;
+              case "Ok":
+                ok8 = val8 instanceof MonkeyResult && val8.isOk;
+                break;
+              case "Err":
+                ok8 = val8 instanceof MonkeyResult && !val8.isOk;
+                break;
               default:
                 ok8 = false;
             }
             this.push(ok8 ? TRUE : FALSE);
             if (recording()) {
               this.recorder.abort("OpTypeIs not JIT-compiled");
+            }
+            break;
+          }
+          case Opcodes.OpResultValue: {
+            const rv = this.pop();
+            if (rv instanceof MonkeyResult) {
+              this.push(rv.value);
+            } else {
+              this.push(NULL);
             }
             break;
           }
@@ -8720,6 +8794,12 @@ ${this.body}
               case "null":
                 ok7 = val7 === NULL;
                 break;
+              case "Ok":
+                ok7 = val7 instanceof MonkeyResult && val7.isOk;
+                break;
+              case "Err":
+                ok7 = val7 instanceof MonkeyResult && !val7.isOk;
+                break;
               default:
                 ok7 = true;
             }
@@ -8756,6 +8836,12 @@ ${this.body}
                 break;
               case "null":
                 ok9 = val9 === NULL;
+                break;
+              case "Ok":
+                ok9 = val9 instanceof MonkeyResult && val9.isOk;
+                break;
+              case "Err":
+                ok9 = val9 instanceof MonkeyResult && !val9.isOk;
                 break;
               default:
                 ok9 = false;
@@ -9489,10 +9575,17 @@ ${this.body}
             case "null":
               matches = subject === NULL;
               break;
+            case "Ok":
+              matches = subject instanceof MonkeyResult && subject.isOk;
+              break;
+            case "Err":
+              matches = subject instanceof MonkeyResult && !subject.isOk;
+              break;
           }
           if (matches) {
             const innerEnv = new Environment(env);
-            innerEnv.set(arm.pattern.binding.value, subject);
+            const bindValue = typeName === "Ok" || typeName === "Err" ? subject.value : subject;
+            innerEnv.set(arm.pattern.binding.value, bindValue);
             return monkeyEval(arm.value, innerEnv);
           }
           continue;
@@ -10138,6 +10231,71 @@ ${this.i()}}`;
         const start = node.start ? this.transpileNode(node.start) : "0";
         const end = node.end ? this.transpileNode(node.end) : "";
         return `${this.transpileNode(node.left)}.slice(${start}${end ? ", " + end : ""})`;
+      }
+      if (node instanceof DestructuringLet) {
+        const names = node.names.map((n) => n ? n.value : "_").join(", ");
+        return `${this.i()}let [${names}] = ${this.transpileNode(node.value)};`;
+      }
+      if (node instanceof HashDestructuringLet) {
+        const names = node.names.map((n) => n.value).join(", ");
+        return `${this.i()}let {${names}} = ${this.transpileNode(node.value)};`;
+      }
+      if (node instanceof RangeExpression) {
+        const start = this.transpileNode(node.start);
+        const end = this.transpileNode(node.end);
+        return `Array.from({length: ${end} - ${start}}, (_, i) => i + ${start})`;
+      }
+      if (node instanceof MatchExpression) {
+        const subject = this.transpileNode(node.subject);
+        const arms = node.arms.map((arm) => {
+          if (arm.pattern === null) {
+            const hasTypePatterns = node.arms.some((a) => a.pattern instanceof TypePattern);
+            if (hasTypePatterns) {
+              return `${this.i()}  { return ${this.transpileNode(arm.value)}; }`;
+            }
+            return `${this.i()}  default: return ${this.transpileNode(arm.value)};`;
+          }
+          if (arm.pattern instanceof TypePattern) {
+            const tn = arm.pattern.typeName;
+            const binding = arm.pattern.binding.value;
+            let check;
+            switch (tn) {
+              case "int":
+                check = `typeof __subj === 'number'`;
+                break;
+              case "string":
+                check = `typeof __subj === 'string'`;
+                break;
+              case "bool":
+                check = `typeof __subj === 'boolean'`;
+                break;
+              case "array":
+                check = `Array.isArray(__subj)`;
+                break;
+              case "fn":
+                check = `typeof __subj === 'function'`;
+                break;
+              case "Ok":
+                check = `__subj && __subj.__isOk === true`;
+                break;
+              case "Err":
+                check = `__subj && __subj.__isOk === false`;
+                break;
+              default:
+                check = `true`;
+                break;
+            }
+            const bindExpr = tn === "Ok" || tn === "Err" ? "__subj.value" : "__subj";
+            return `${this.i()}  if (${check}) { let ${binding} = ${bindExpr}; return ${this.transpileNode(arm.value)}; }`;
+          }
+          return `${this.i()}  case ${this.transpileNode(arm.pattern)}: return ${this.transpileNode(arm.value)};`;
+        }).join("\n");
+        return `((__subj) => {
+${arms}
+${this.i()}})(${subject})`;
+      }
+      if (node instanceof TypePattern) {
+        return `/* type pattern: ${node.typeName}(${node.binding.value}) */`;
       }
       return `/* unsupported: ${node.constructor.name} */`;
     }
