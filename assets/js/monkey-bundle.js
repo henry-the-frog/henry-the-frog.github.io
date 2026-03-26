@@ -58,6 +58,7 @@ var Monkey = (() => {
     NULLISH: "??",
     OPTIONAL_CHAIN: "?.",
     DOT: ".",
+    DOT_DOT: "..",
     ARROW: "=>",
     THIN_ARROW: "->",
     SPREAD: "...",
@@ -407,6 +408,9 @@ var Monkey = (() => {
             this.readChar();
             this.readChar();
             tok = new Token(TokenType.SPREAD, "...");
+          } else if (this.peekChar() === ".") {
+            this.readChar();
+            tok = new Token(TokenType.DOT_DOT, "..");
           } else {
             tok = new Token(TokenType.DOT, ".");
           }
@@ -899,6 +903,19 @@ var Monkey = (() => {
       return "do { ... } while (...)";
     }
   };
+  var RangeExpression = class {
+    constructor(token, start, end) {
+      this.token = token;
+      this.start = start;
+      this.end = end;
+    }
+    tokenLiteral() {
+      return this.token.literal;
+    }
+    toString() {
+      return `${this.start}..${this.end}`;
+    }
+  };
 
   // src/parser.js
   var Precedence = {
@@ -938,6 +955,7 @@ var Monkey = (() => {
     [TokenType.QUESTION]: Precedence.OR,
     [TokenType.NULLISH]: Precedence.NULLISH,
     [TokenType.PIPE]: Precedence.PIPE,
+    [TokenType.DOT_DOT]: Precedence.PIPE,
     [TokenType.OPTIONAL_CHAIN]: Precedence.INDEX,
     [TokenType.DOT]: Precedence.INDEX,
     [TokenType.PLUS_PLUS]: Precedence.CALL,
@@ -1007,6 +1025,7 @@ var Monkey = (() => {
         this.registerInfix(op, (left) => this.parseInfixExpression(left));
       }
       this.registerInfix(TokenType.PIPE, (left) => this.parsePipeExpression(left));
+      this.registerInfix(TokenType.DOT_DOT, (left) => this.parseRangeExpression(left));
       this.registerInfix(TokenType.OPTIONAL_CHAIN, (left) => this.parseOptionalChainExpression(left));
       this.registerInfix(TokenType.DOT, (left) => this.parseDotExpression(left));
       this.registerInfix(TokenType.LPAREN, (left) => this.parseCallExpression(left));
@@ -1262,6 +1281,12 @@ var Monkey = (() => {
       } else {
         return new CallExpression(token, right, [left]);
       }
+    }
+    parseRangeExpression(left) {
+      const token = this.curToken;
+      this.nextToken();
+      const end = this.parseExpression(Precedence.PIPE + 1);
+      return new RangeExpression(token, left, end);
     }
     parseOptionalChainExpression(left) {
       const token = this.curToken;
@@ -2551,6 +2576,14 @@ ${this.body}
         this.resetPeepholeState();
       } else if (node instanceof MatchExpression) {
         return this.compileMatchExpression(node);
+      } else if (node instanceof RangeExpression) {
+        const rangeIdx = BUILTINS.indexOf("range");
+        this.emit(Opcodes.OpGetBuiltin, rangeIdx);
+        let err = this.compile(node.start);
+        if (err) return err;
+        err = this.compile(node.end);
+        if (err) return err;
+        this.emit(Opcodes.OpCall, 2);
       } else if (node instanceof TemplateLiteral) {
         return this.compileTemplateLiteral(node);
       } else if (node instanceof BooleanLiteral) {
@@ -2702,14 +2735,39 @@ ${this.body}
       } else if (node instanceof FunctionLiteral) {
         return this.compileFunctionLiteral(node);
       } else if (node instanceof CallExpression) {
-        const err = this.compile(node.function);
-        if (err) return err;
-        for (const arg of node.arguments) {
-          const err2 = this.compile(arg);
-          if (err2) return err2;
+        if (node.function instanceof IndexExpression && node.function.index instanceof StringLiteral) {
+          const methodName = node.function.index.value;
+          const builtinIdx = BUILTINS.indexOf(methodName);
+          if (builtinIdx !== -1) {
+            this.emit(Opcodes.OpGetBuiltin, builtinIdx);
+            const err = this.compile(node.function.left);
+            if (err) return err;
+            for (const arg of node.arguments) {
+              const err2 = this.compile(arg);
+              if (err2) return err2;
+            }
+            this.emit(Opcodes.OpCall, node.arguments.length + 1);
+            this.resetIntStack();
+          } else {
+            const err = this.compile(node.function);
+            if (err) return err;
+            for (const arg of node.arguments) {
+              const err2 = this.compile(arg);
+              if (err2) return err2;
+            }
+            this.emit(Opcodes.OpCall, node.arguments.length);
+            this.resetIntStack();
+          }
+        } else {
+          const err = this.compile(node.function);
+          if (err) return err;
+          for (const arg of node.arguments) {
+            const err2 = this.compile(arg);
+            if (err2) return err2;
+          }
+          this.emit(Opcodes.OpCall, node.arguments.length);
+          this.resetIntStack();
         }
-        this.emit(Opcodes.OpCall, node.arguments.length);
-        this.resetIntStack();
       }
       return null;
     }
@@ -7847,6 +7905,24 @@ ${this.body}
               } else {
                 this.push(new MonkeyString(left3.value[i]));
               }
+            } else if (left3 instanceof MonkeyString && index instanceof MonkeyString) {
+              switch (index.value) {
+                case "length":
+                  this.push(new MonkeyInteger(left3.value.length));
+                  break;
+                default:
+                  this.push(NULL);
+                  break;
+              }
+            } else if (left3 instanceof MonkeyArray && index instanceof MonkeyString) {
+              switch (index.value) {
+                case "length":
+                  this.push(new MonkeyInteger(left3.elements.length));
+                  break;
+                default:
+                  this.push(NULL);
+                  break;
+              }
             } else {
               throw new Error(`index operator not supported: ${left3.type()}`);
             }
@@ -9317,6 +9393,20 @@ ${this.body}
       if (isError(right)) return right;
       return evalPrefixExpression(node.operator, right);
     }
+    if (node instanceof RangeExpression) {
+      const start = monkeyEval(node.start, env);
+      if (isError(start)) return start;
+      const end = monkeyEval(node.end, env);
+      if (isError(end)) return end;
+      if (!(start instanceof MonkeyInteger) || !(end instanceof MonkeyInteger)) {
+        return new MonkeyError("range requires integer bounds");
+      }
+      const elements = [];
+      for (let i = start.value; i < end.value; i++) {
+        elements.push(new MonkeyInteger(i));
+      }
+      return new MonkeyArray(elements);
+    }
     if (node instanceof InfixExpression) {
       if (node.operator === "&&") {
         const left2 = monkeyEval(node.left, env);
@@ -9749,6 +9839,22 @@ ${this.body}
       if (idx < 0) idx += left.value.length;
       if (idx < 0 || idx >= left.value.length) return NULL;
       return new MonkeyString(left.value[idx]);
+    }
+    if (left.type() === OBJ.STRING && index instanceof MonkeyString) {
+      switch (index.value) {
+        case "length":
+          return new MonkeyInteger(left.value.length);
+        default:
+          return NULL;
+      }
+    }
+    if (left.type() === OBJ.ARRAY && index instanceof MonkeyString) {
+      switch (index.value) {
+        case "length":
+          return new MonkeyInteger(left.elements.length);
+        default:
+          return NULL;
+      }
     }
     return newError(`index operator not supported: ${left.type()}`);
   }
