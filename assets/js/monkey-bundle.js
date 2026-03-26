@@ -2024,7 +2024,7 @@ var Monkey = (() => {
       return this.value;
     }
   };
-  var MonkeyBoolean2 = class {
+  var MonkeyBoolean = class {
     constructor(value) {
       this.value = value;
     }
@@ -2181,8 +2181,8 @@ ${this.body}
       return val;
     }
   };
-  var TRUE = new MonkeyBoolean2(true);
-  var FALSE = new MonkeyBoolean2(false);
+  var TRUE = new MonkeyBoolean(true);
+  var FALSE = new MonkeyBoolean(false);
   var NULL = new MonkeyNull();
   var INT_CACHE_MIN = -1;
   var INT_CACHE_MAX = 256;
@@ -3037,15 +3037,6 @@ ${this.body}
       if (hasRestParam) {
         this.symbolTable.define(node.restParam.value);
       }
-      if (node.paramTypes) {
-        for (let i = 0; i < node.paramTypes.length; i++) {
-          if (node.paramTypes[i]) {
-            const sym = this.symbolTable.resolve(node.parameters[i].value);
-            const typeIdx = this.addConstant(node.paramTypes[i]);
-            this.emit(Opcodes.OpTypeCheck, sym.index, typeIdx);
-          }
-        }
-      }
       if (node.defaults) {
         for (let i = 0; i < node.defaults.length; i++) {
           if (node.defaults[i] !== null) {
@@ -3058,6 +3049,15 @@ ${this.body}
             if (err2) return err2;
             this.emit(sym.scope === "LOCAL" ? Opcodes.OpSetLocal : Opcodes.OpSetGlobal, sym.index);
             this.changeOperand(jumpPos, this.currentInstructions().length);
+          }
+        }
+      }
+      if (node.paramTypes) {
+        for (let i = 0; i < node.paramTypes.length; i++) {
+          if (node.paramTypes[i]) {
+            const sym = this.symbolTable.resolve(node.parameters[i].value);
+            const typeIdx = this.addConstant(node.paramTypes[i]);
+            this.emit(Opcodes.OpTypeCheck, sym.index, typeIdx);
           }
         }
       }
@@ -3610,7 +3610,7 @@ ${this.body}
         this.typeMap.set(ref, "int");
         this.trace.guardCount++;
         return "int";
-      } else if (value instanceof MonkeyBoolean2) {
+      } else if (value instanceof MonkeyBoolean) {
         const gid = this.addGuardInst(IR.GUARD_BOOL, { ref, exitIp });
         this.typeMap.set(ref, "bool");
         this.trace.guardCount++;
@@ -6361,7 +6361,7 @@ ${this.body}
             const constVal = this.constants[constIdx];
             if (constVal instanceof MonkeyInteger) {
               lines.push(`__s[__sp++] = __cachedInteger(${constVal.value});`);
-            } else if (constVal instanceof MonkeyBoolean2) {
+            } else if (constVal instanceof MonkeyBoolean) {
               lines.push(`__s[__sp++] = ${constVal.value ? "__TRUE" : "__FALSE"};`);
             } else {
               lines.push(`__s[__sp++] = __consts[${constIdx}];`);
@@ -6577,7 +6577,7 @@ ${this.body}
               const constVal = this.constants[constIdx];
               if (constVal instanceof MonkeyInteger) {
                 lines.push(`      __s[__sp++] = __cachedInteger(${constVal.value});`);
-              } else if (constVal instanceof MonkeyBoolean2) {
+              } else if (constVal instanceof MonkeyBoolean) {
                 lines.push(`      __s[__sp++] = ${constVal.value ? "__TRUE" : "__FALSE"};`);
               } else {
                 lines.push(`      __s[__sp++] = __consts[${constIdx}];`);
@@ -6829,7 +6829,7 @@ ${this.body}
       }
       for (const idx of referencedConsts) {
         const c = this.constants[idx];
-        if (c instanceof MonkeyInteger || c instanceof MonkeyBoolean2) continue;
+        if (c instanceof MonkeyInteger || c instanceof MonkeyBoolean) continue;
         return false;
       }
       return true;
@@ -6892,7 +6892,7 @@ ${this.body}
               const constVal = this.constants[constIdx];
               if (constVal instanceof MonkeyInteger) {
                 lines.push(`        __s[__sp++] = ${constVal.value};`);
-              } else if (constVal instanceof MonkeyBoolean2) {
+              } else if (constVal instanceof MonkeyBoolean) {
                 lines.push(`        __s[__sp++] = ${constVal.value};`);
               } else {
                 return null;
@@ -7692,7 +7692,7 @@ ${this.body}
                   break;
               }
               this.push(result ? TRUE : FALSE);
-            } else if (left2 instanceof MonkeyBoolean2 && right2 instanceof MonkeyBoolean2) {
+            } else if (left2 instanceof MonkeyBoolean && right2 instanceof MonkeyBoolean) {
               if (recording()) {
                 this._abortRecording();
               }
@@ -8353,7 +8353,7 @@ ${this.body}
                 ok = val instanceof MonkeyInteger;
                 break;
               case "bool":
-                ok = val instanceof MonkeyBoolean2;
+                ok = val instanceof MonkeyBoolean;
                 break;
               case "string":
                 ok = val instanceof MonkeyString;
@@ -8400,7 +8400,7 @@ ${this.body}
                 ok8 = val8 instanceof MonkeyInteger;
                 break;
               case "bool":
-                ok8 = val8 instanceof MonkeyBoolean2;
+                ok8 = val8 instanceof MonkeyBoolean;
                 break;
               case "string":
                 ok8 = val8 instanceof MonkeyString;
@@ -8798,7 +8798,7 @@ ${this.body}
                 ok7 = val7 instanceof MonkeyInteger;
                 break;
               case "bool":
-                ok7 = val7 instanceof MonkeyBoolean2;
+                ok7 = val7 instanceof MonkeyBoolean;
                 break;
               case "string":
                 ok7 = val7 instanceof MonkeyString;
@@ -8841,7 +8841,7 @@ ${this.body}
                 ok9 = val9 instanceof MonkeyInteger;
                 break;
               case "bool":
-                ok9 = val9 instanceof MonkeyBoolean2;
+                ok9 = val9 instanceof MonkeyBoolean;
                 break;
               case "string":
                 ok9 = val9 instanceof MonkeyString;
@@ -8876,7 +8876,7 @@ ${this.body}
       }
     }
     isTruthy(obj) {
-      if (obj instanceof MonkeyBoolean2) return obj.value;
+      if (obj instanceof MonkeyBoolean) return obj.value;
       if (obj === NULL) return false;
       return true;
     }
@@ -8920,7 +8920,7 @@ ${this.body}
           allConsts,
           frame.closure.free,
           MonkeyInteger,
-          MonkeyBoolean2,
+          MonkeyBoolean,
           MonkeyString,
           MonkeyArray,
           TRUE,
@@ -9024,7 +9024,7 @@ ${this.body}
           allConsts,
           closure.free,
           MonkeyInteger,
-          MonkeyBoolean2,
+          MonkeyBoolean,
           MonkeyString,
           TRUE,
           FALSE,
@@ -9044,7 +9044,7 @@ ${this.body}
           allConsts,
           closure.free,
           MonkeyInteger,
-          MonkeyBoolean2,
+          MonkeyBoolean,
           MonkeyString,
           TRUE,
           FALSE,
@@ -9063,7 +9063,7 @@ ${this.body}
         allConsts,
         closure.free,
         MonkeyInteger,
-        MonkeyBoolean2,
+        MonkeyBoolean,
         MonkeyString,
         TRUE,
         FALSE,
@@ -9092,7 +9092,7 @@ ${this.body}
         allConsts,
         frame.closure.free,
         MonkeyInteger,
-        MonkeyBoolean2,
+        MonkeyBoolean,
         MonkeyString,
         MonkeyArray,
         TRUE,
@@ -9134,7 +9134,7 @@ ${this.body}
             const ref = trace.addInst(IR.CONST_INT, { value: value.value });
             r.typeMap.set(ref, "raw_int");
             r.pushRef(ref);
-          } else if (value instanceof MonkeyBoolean2) {
+          } else if (value instanceof MonkeyBoolean) {
             const ref = trace.addInst(IR.CONST_BOOL, { value: value.value });
             r.typeMap.set(ref, "bool");
             r.pushRef(ref);
@@ -9194,7 +9194,7 @@ ${this.body}
         const ref = trace.addInst(IR.CONST_INT, { value: value.value });
         r.typeMap.set(ref, "raw_int");
         r.pushRef(ref);
-      } else if (value instanceof MonkeyBoolean2) {
+      } else if (value instanceof MonkeyBoolean) {
         const ref = trace.addInst(IR.CONST_BOOL, { value: value.value });
         r.typeMap.set(ref, "bool");
         r.pushRef(ref);
@@ -9436,6 +9436,35 @@ ${this.body}
       const result = [];
       for (let i = 0; i < args[0].elements.length; i++) result.push(new MonkeyArray([new MonkeyInteger(i), args[0].elements[i]]));
       return new MonkeyArray(result);
+    })],
+    ["Ok", new MonkeyBuiltin((...args) => {
+      if (args.length !== 1) return newError(`wrong number of arguments. got=${args.length}, want=1`);
+      return new MonkeyResult(true, args[0]);
+    })],
+    ["Err", new MonkeyBuiltin((...args) => {
+      if (args.length !== 1) return newError(`wrong number of arguments. got=${args.length}, want=1`);
+      return new MonkeyResult(false, args[0]);
+    })],
+    ["is_ok", new MonkeyBuiltin((...args) => {
+      if (args.length !== 1) return newError(`wrong number of arguments. got=${args.length}, want=1`);
+      if (!(args[0] instanceof MonkeyResult)) return FALSE;
+      return args[0].isOk ? TRUE : FALSE;
+    })],
+    ["is_err", new MonkeyBuiltin((...args) => {
+      if (args.length !== 1) return newError(`wrong number of arguments. got=${args.length}, want=1`);
+      if (!(args[0] instanceof MonkeyResult)) return FALSE;
+      return args[0].isOk ? FALSE : TRUE;
+    })],
+    ["unwrap", new MonkeyBuiltin((...args) => {
+      if (args.length !== 1) return newError(`wrong number of arguments. got=${args.length}, want=1`);
+      if (!(args[0] instanceof MonkeyResult)) return newError("unwrap requires a Result");
+      if (!args[0].isOk) return newError("unwrap called on Err: " + args[0].value.inspect());
+      return args[0].value;
+    })],
+    ["unwrap_or", new MonkeyBuiltin((...args) => {
+      if (args.length !== 2) return newError(`wrong number of arguments. got=${args.length}, want=2`);
+      if (!(args[0] instanceof MonkeyResult)) return args[0];
+      return args[0].isOk ? args[0].value : args[1];
     })]
   ]);
   function newError(msg) {
@@ -9480,7 +9509,7 @@ ${this.body}
       if (val instanceof MonkeyHash) {
         for (const name of node.names) {
           const key = internString(name.value);
-          const hashKey = key.hashKey();
+          const hashKey = key.fastHashKey();
           const pair = val.pairs.get(hashKey);
           env.set(name.value, pair ? pair.value : NULL);
         }
