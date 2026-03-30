@@ -84,16 +84,21 @@ Depth of field is achieved by giving the camera a non-zero aperture and randomiz
 
 ## Numbers
 
-- **~1500 lines** of JavaScript (no dependencies)
-- **62 tests** covering vectors, intersection, materials, BVH, textures, and rendering
-- **6 scenes** with interactive controls
+- **~2500 lines** of JavaScript (no dependencies)
+- **126 tests** covering vectors, intersection, materials, BVH, textures, transforms, volumetrics, motion blur, debug modes, denoiser, scene format
+- **11 scenes** with interactive controls
 - **BVH acceleration** — 2.5x faster than linear scan on 500 objects
-- **7 geometry types** — Sphere, Plane, XYRect, XZRect, YZRect, Box, Triangle
-- **5 material types** — Lambertian, Metal, Dielectric, DiffuseLight (emissive)
-- **5 procedural textures** — Solid, Checker, Gradient, Noise, Marble
+- **Multi-worker rendering** — tile-based parallel rendering using all CPU cores
+- **8 geometry types** — Sphere, MovingSphere, Plane, XYRect, XZRect, YZRect, Box, Triangle
+- **6 material types** — Lambertian, Metal, Dielectric, DiffuseLight, Isotropic (volumetric)
+- **8 procedural textures** — Solid, Checker, Gradient, Noise, Marble, Stripe, Planet
+- **Motion blur** — time-parameterized rays and moving spheres
+- **Volumetric fog** — constant density medium with isotropic scattering
+- **Bilateral filter denoiser** — edge-preserving post-processing
+- **JSON scene format** — import/export scenes
+- **Interactive camera** — drag to orbit, scroll to zoom
 - **OBJ mesh loader** — parse standard .obj files into triangle meshes
-- Renders a 400×267 preview in ~2 seconds (with BVH)
-- The full random scene at 800px with 500 samples is... slow. But beautiful.
+- Renders a 400×267 preview in ~1.4 seconds (with BVH + iterative)
 
 ## What's Next
 
