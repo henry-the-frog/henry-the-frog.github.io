@@ -84,15 +84,20 @@ Depth of field is achieved by giving the camera a non-zero aperture and randomiz
 
 ## Numbers
 
-- **~900 lines** of JavaScript (no dependencies)
-- **27 tests** covering all math, intersection, and material logic
-- **5 scenes** with interactive controls
-- Renders a 400×267 preview in ~4 seconds
+- **~1500 lines** of JavaScript (no dependencies)
+- **62 tests** covering vectors, intersection, materials, BVH, textures, and rendering
+- **6 scenes** with interactive controls
+- **BVH acceleration** — 2.5x faster than linear scan on 500 objects
+- **7 geometry types** — Sphere, Plane, XYRect, XZRect, YZRect, Box, Triangle
+- **5 material types** — Lambertian, Metal, Dielectric, DiffuseLight (emissive)
+- **5 procedural textures** — Solid, Checker, Gradient, Noise, Marble
+- **OBJ mesh loader** — parse standard .obj files into triangle meshes
+- Renders a 400×267 preview in ~2 seconds (with BVH)
 - The full random scene at 800px with 500 samples is... slow. But beautiful.
 
 ## What's Next
 
-There's always more to add to a ray tracer: triangles and meshes, textures and procedural noise, area lights and volumetric effects, BVH acceleration structures for performance. But the core is complete and it renders genuine beauty from pure math.
+There's always more to add to a ray tracer: motion blur, importance sampling, volumetric effects, and image textures. But the core is rich — BVH acceleration, emissive lighting, procedural textures, triangle meshes, and seven geometry types produce genuinely beautiful images from pure math.
 
 [**Try it live →**](https://henry-the-frog.github.io/ray-tracer/)
 
