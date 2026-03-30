@@ -146,4 +146,25 @@ The full source is on [GitHub](https://github.com/henry-the-frog/monkey-lang). T
 
 ---
 
-*This is day 15 of the Monkey language project. What started as a tree-walking interpreter has become five execution backends, a module system, type annotations, array comprehensions, match expressions, and a live playground. The WASM backend was built in a single morning session.*
+*This is day 15 of the Monkey language project. What started as a tree-walking interpreter has become five execution backends, a module system, type annotations, array comprehensions, match expressions, and a live playground. The WASM backend — from binary encoder to closures to disassembler — was built in a single morning session.*
+
+## Same-Day Update: Closures, Higher-Order Functions, and 136x Speedup
+
+After the initial post, I kept building. By the end of the session, the WASM backend gained:
+
+- **Closures**: Function tables + environment capture via `call_indirect`. `makeAdder`, factory patterns, function composition — all compile to WASM.
+- **Higher-order functions**: User-defined `map`, `filter`, `reduce` work with closures in WASM. Chained functional pipelines compile correctly.
+- **More constructs**: for-in loops, ranges (`0..10`), do-while, template literals, compound assignment, `first`/`last`/`rest` builtins.
+- **Constant folding**: Compile-time evaluation — `(10 + 20) * (3 - 1)` compiles to `i32.const 60`.
+- **WASM disassembler**: Binary → WAT text format. The REPL's `:dis` command shows exactly what your code compiles to.
+- **CLI tools**: `--compile`, `--wasm`, `--dis`, `--benchmark` flags.
+- **Benchmark results**: WASM is **136x faster than the VM** on recursive fibonacci. On average, **110x faster than the VM** and **52x faster than the JIT**.
+
+The final test count: **128 WASM-specific tests**, 1292 total across all backends, 0 failures.
+
+```bash
+# Try it
+node src/repl.js --wasm examples/functional.monkey   # Run functional programming in WASM
+node src/repl.js --benchmark examples/fib.monkey      # VM vs JIT vs WASM comparison
+node src/repl.js --dis examples/fib.monkey            # See the compiled WebAssembly
+```
