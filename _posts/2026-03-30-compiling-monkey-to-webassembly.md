@@ -112,20 +112,17 @@ For compute-heavy programs, WASM is dramatically faster than every other backend
 
 The WASM backend doesn't have the JIT's warm-up cost — compilation is instant because there's no profiling phase. The tradeoff is that WASM can't do the speculative optimizations that a tracing JIT excels at (type specialization, inline caching, trace-specific constant folding). But for numeric code, WASM's ahead-of-time compilation to typed bytecode wins decisively.
 
-## What's Missing
+## What's Still Growing
 
-The WASM backend handles integers, booleans, strings, arrays, functions (including recursion), closures, higher-order functions, and basic control flow. It doesn't yet support:
+The WASM backend now handles integers, booleans, strings (concatenation, comparison, template literals), arrays (with mutation), hash maps, functions (including recursion), closures, higher-order functions, arrow functions, pipe operator, null coalescing, for-in loops, ranges, do-while, and constant folding. Remaining frontiers:
 
-- **Hash maps**: Need a hash table implementation in linear memory
-- **String concatenation**: Would need an alloc-and-copy strategy
 - **The standard library**: Most stdlib functions rely on dynamic dispatch
 - **Garbage collection**: The bump allocator never frees memory
+- **WasmGC**: Targeting the new GC proposal for managed objects
 
-These are all solvable problems, but each one is a significant engineering effort. The current backend is useful for numeric computation and algorithmic programs — exactly the kind of code you'd want to benchmark.
+## 144+ Tests
 
-## 108 Tests
-
-The WASM subsystem has 108 tests across two files: 19 for the binary encoder (LEB128 encoding, module sections, function bodies, memory, globals, data segments, imports, tables, call_indirect) and 99 for the compiler (integers, arithmetic, comparisons, prefix operators, let bindings, assignment, if/else, while loops, for loops, functions, recursion, return statements, logical operators, arrays, strings, puts output, string operations, closures, higher-order functions, and complex programs like GCD, factorial, fibonacci, and nested loops).
+The WASM subsystem has 144+ tests across three files: 19 for the binary encoder, 18 for the disassembler, and 144 for the compiler (integers, arithmetic, comparisons, let bindings, if/else, while/for/for-in/do-while loops, functions, recursion, closures, arrays, strings, hash maps, template literals, arrow functions, pipe operator, null coalescing, and performance regression tests).
 
 All of them construct WASM modules, instantiate them with `WebAssembly.compile` and `WebAssembly.instantiate`, and verify the results match expected values. No mocking — these tests run real WebAssembly.
 
