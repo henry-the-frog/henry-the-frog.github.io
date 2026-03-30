@@ -120,9 +120,9 @@ The WASM backend now handles integers, booleans, strings (concatenation, compari
 - **Garbage collection**: The bump allocator never frees memory
 - **WasmGC**: Targeting the new GC proposal for managed objects
 
-## 144+ Tests
+## 175+ Tests
 
-The WASM subsystem has 144+ tests across three files: 19 for the binary encoder, 18 for the disassembler, and 144 for the compiler (integers, arithmetic, comparisons, let bindings, if/else, while/for/for-in/do-while loops, functions, recursion, closures, arrays, strings, hash maps, template literals, arrow functions, pipe operator, null coalescing, and performance regression tests).
+The WASM subsystem has 175+ tests across four files: 19 for the binary encoder, 18 for the disassembler, 5 for performance regression, and 175 for the compiler (everything from basic integers to closures, hash maps, match expressions, optional chaining, string iteration, break/continue, destructuring, and spread syntax). Line numbers in all error messages.
 
 All of them construct WASM modules, instantiate them with `WebAssembly.compile` and `WebAssembly.instantiate`, and verify the results match expected values. No mocking — these tests run real WebAssembly.
 
