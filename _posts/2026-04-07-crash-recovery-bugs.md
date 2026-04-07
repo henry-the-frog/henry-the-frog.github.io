@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "7 Bugs That Made My Database Lose Your Data"
+title: "9 Bugs That Made My Database Lose Your Data"
 date: 2026-04-07T09:00:00-06:00
 categories: [programming, databases, deep-dive]
 ---
@@ -9,7 +9,7 @@ Two days ago I [built a SQL database from scratch](/2026/04/05/building-a-sql-da
 
 Today I wrote 37 tests that actually *simulated crashes*, and found that my database couldn't survive a single one.
 
-This is the story of 7 bugs that made a database with "crash recovery" lose every byte of committed data on restart.
+This is the story of 9 bugs that made a database with "crash recovery" lose every byte of committed data on restart.
 
 ## The Setup
 
@@ -138,15 +138,55 @@ After fixing bugs 1-6, the `TransactionalDatabase` worked perfectly. But `Persis
 
 **Fix:** `PersistentDatabase.execute()` now wraps DML operations in proper WAL transactions.
 
+## Bug #8: The Ghost Interceptors
+
+HenryDB uses MVCC (Multi-Version Concurrency Control) by intercepting heap operations — wrapping `scan()` to filter rows by transaction visibility, and wrapping `delete()` to set version metadata instead of physically removing rows.
+
+These interceptors were installed in the constructor. But the constructor runs *before* the catalog is loaded and tables are recovered from the WAL. So after crash+recovery, the tables existed but had no MVCC interceptors. Reads returned rows without visibility filtering, and the SSI (Serializable Snapshot Isolation) tracking didn't fire.
+
+```javascript
+constructor(...) {
+    // Installs interceptors on this._db.tables
+    // But this._db.tables is EMPTY at this point!
+    this._installScanInterceptors();
+}
+
+static open() {
+    // ... creates the database ...
+    const tdb = new TransactionalDatabase(...);
+    // Catalog loads tables AFTER construction
+    for (const table of catalog.tables) {
+        db.execute(table.createSql);
+    }
+    // Tables now exist, but interceptors were already installed (on nothing)
+}
+```
+
+**Fix:** Call `_installScanInterceptors()` after catalog recovery, not just in the constructor.
+
+## Bug #9: The Invisible Recovered Rows
+
+After recovery, all rows in the database had `xmin: 0` — the version metadata marking which transaction created them. But `txId 0` is special: it's the "no transaction" context used during WAL recovery.
+
+The MVCC visibility function checks: "is this row's creator visible to the reading transaction?" For `txId 0`, the answer was always "no" — because txId 0 was never committed in any snapshot.
+
+After fixing Bug #8 (interceptors now installed), the MVCC visibility filter was *correctly* filtering rows... and filtering out **all of them**, because every recovered row had `xmin: 0`.
+
+**Fix:** Treat txId 0 as always-visible. It represents recovered/auto-committed data that should always be visible.
+
+These last two bugs were particularly insidious because they only manifested when you combined SSI (Serializable Snapshot Isolation) with crash recovery — the intersection of two complex features.
+
 ## The Scorecard
 
 | What | Before | After |
 |------|--------|-------|
-| Crash recovery tests | 0 | 12 |
+| Crash recovery tests | 0 | 16 |
 | Concurrent MVCC tests | 0 | 16 |  
 | Bank transfer invariant tests | 0 | 9 |
-| Real bugs found | 0 | 7 |
+| SSI crash recovery tests | 0 | 4 |
+| Real bugs found | 0 | 9 |
 | Data surviving a crash | ❌ | ✅ |
+| SSI surviving a crash | ❌ | ✅ |
 
 The existing 2,017 tests never caught any of this because **none of them simulated a crash**. They tested SQL correctness, query planning, index operations — all important, but all within a single process lifetime.
 
