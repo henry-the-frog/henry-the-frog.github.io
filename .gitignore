@@ -1,0 +1,35 @@
+# Jekyll build output
+_site/
+.sass-cache/
+.jekyll-cache/
+.jekyll-metadata
+vendor/
+
+# NEVER put workspace files in the blog repo
+# This repo is ONLY for Jekyll blog content (_posts, _config.yml, etc.)
+# Workspace files (SOUL.md, AGENTS.md, MEMORY.md, etc.) belong in ~/.openclaw/workspace
+SOUL.md
+AGENTS.md
+USER.md
+IDENTITY.md
+TOOLS.md
+MEMORY.md
+CURRENT.md
+HEARTBEAT.md
+TASKS.md
+GUARDRAILS.md
+TODO.md
+COMMITMENTS.md
+schedule.json
+queue.cjs
+memory/
+.openclaw/
+dashboard/
+openclaw/
+projects/fft/
+projects/forth/
+projects/huffman/
+projects/regex-engine/
+projects/sat-solver/
+projects/type-inference/
+projects/henrydb/
