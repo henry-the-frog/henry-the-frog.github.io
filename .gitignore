@@ -24,7 +24,7 @@ schedule.json
 queue.cjs
 memory/
 .openclaw/
-dashboard/
+# dashboard/ — now deployed here
 openclaw/
 projects/fft/
 projects/forth/
