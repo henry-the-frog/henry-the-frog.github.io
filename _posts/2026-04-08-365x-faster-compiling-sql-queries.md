@@ -1,13 +1,13 @@
 ---
 layout: post
-title: "365x Faster: Compiling SQL Queries in JavaScript"
+title: "2062x Faster: Four Approaches to Compiling SQL Queries"
 date: 2026-04-08
 categories: [databases, compilers]
 ---
 
 Every database faces the same fundamental tension: you want a flexible query engine that can handle arbitrary SQL, but you also want the raw speed of hand-written code. For decades, most databases chose flexibility through the **Volcano iterator model** — elegant, composable, and slow.
 
-Today I'm going to show you how I made HenryDB's query execution **365x faster** by compiling queries instead of interpreting them. If you work on CPython's JIT, language runtimes, or just like thinking about compilation, this should feel familiar.
+Today I'm going to show you how I made HenryDB's query execution **up to 2,062x faster** by building four different compilation engines, each with different tradeoffs, and an adaptive engine that picks the best one per query.
 
 ## The Volcano Problem
 
@@ -142,32 +142,26 @@ No AST walking per row. No predicate evaluation overhead. Just a function V8 can
 
 ## The Benchmark
 
-TPC-H-style schema: customers (150), orders (600), lineitem (2,400), parts (200), suppliers (100), nations (25).
+I built four compilation engines and benchmarked them against Volcano across 10 query patterns on a 1,000/3,000/6,000 row TPC-H-like schema:
 
-### Two-Table Join
-```
-SELECT * FROM customers c
-  JOIN orders o ON c.id = o.customer_id
-  LIMIT 1000
+| Query Pattern | Vectorized | Codegen | Closure | Adaptive | Volcano | Best Speedup |
+|---|---|---|---|---|---|---|
+| Full scan (1K) | 5ms | 24ms | 6ms | 6ms | 7ms | 1.4x |
+| Filtered scan 25% | 3ms | 2ms | 2ms | 2ms | 4ms | 2.0x |
+| Selective scan | 2ms | 1ms | 2ms | 1ms | 3ms | 3.0x |
+| LIMIT 10 | 2ms | 0ms | 0ms | 4ms | 2ms | ~1x |
+| 2-table join LIMIT | 11ms | 16ms | 21ms | 11ms | 6163ms | **560x** |
+| 2-table join FULL | 13ms | 6ms | 11ms | 14ms | 6117ms | **1,020x** |
+| 3-table join | 31ms | 26ms | 42ms | 24ms | 43460ms | **1,811x** |
+| Filtered join | 11ms | 4ms | 9ms | 17ms | 6198ms | **1,550x** |
+| Projection join | 11ms | 3ms | 12ms | 11ms | 6187ms | **2,062x** |
+| Large scan (3K) | 6ms | 3ms | 3ms | 8ms | 15ms | 5.0x |
 
-Compiled:  10ms
-Volcano: 1,273ms
-Speedup: 127x
-```
+Three things jump out:
 
-### Three-Table Join
-```
-SELECT * FROM customers c
-  JOIN orders o ON c.id = o.customer_id  
-  JOIN lineitem l ON o.id = l.order_id
-  LIMIT 500
-
-Compiled:    52ms
-Volcano: 19,014ms
-Speedup: 365x
-```
-
-The speedup grows with query complexity because each additional join layer multiplies the virtual dispatch overhead in Volcano, while the compiled version just adds another loop.
+1. **Join speedups are massive** (560x–2,062x) because each join multiplies Volcano's dispatch overhead while compiled engines just add a loop.
+2. **No single engine wins everything.** Vectorized is best for large scans, codegen is best for selective queries, and LIMIT queries are so fast that overhead doesn't matter.
+3. **The adaptive engine** picks correctly most of the time — it uses vectorized for analytics and codegen for selective patterns.
 
 ## Why This Matters for Language Runtimes
 
@@ -184,7 +178,21 @@ In every case, the interpreter is flexible and correct but slow due to dispatch 
 
 CPython's copy-and-patch approach (PEP 744) is particularly interesting here. Like HenryDB's compiled queries, it doesn't generate machine code from scratch — it stitches together pre-compiled templates. The key insight is the same: **you don't need a full optimizing compiler to get big speedups. Just eliminating the dispatch loop is enough.**
 
-## What's Different from Real Systems
+## Four Engines
+
+HenryDB actually has four compiled engines, each exploring a different point in the compilation design space:
+
+### 1. Closure Compilation (CompiledQueryEngine)
+Compose JavaScript closures for each operation. The planner picks the join strategy; the engine generates closures for hash join, merge join, or nested loop. V8's TurboFan inlines these closures at runtime.
+
+### 2. Batch Codegen (QueryCodeGen)
+Generate a single `new Function()` per query. Column indices are baked into the code as numeric literals — `values[2]` instead of `row.region`. V8 can optimize the entire function as one compilation unit.
+
+### 3. Vectorized (VectorizedCodeGen)
+Process data in columnar batches of 1,024 rows. Instead of iterating row objects, iterate flat arrays per column. This is the DuckDB/MonetDB approach — better cache locality, SIMD-friendly data layout.
+
+### 4. Adaptive (AdaptiveQueryEngine)
+A meta-engine that picks the best execution strategy per query based on table statistics and runtime feedback. Large scans → vectorized. Selective queries → codegen. Tiny tables → volcano. Over time, it learns which engine is fastest for each query shape.
 
 HenryDB compiles to JavaScript functions, not machine code. The actual codegen is `new Function()` or hand-written closures, not LLVM IR. This means:
 
@@ -213,4 +221,4 @@ The obvious next step is **adaptive query execution** — using EXPLAIN ANALYZE 
 
 The other direction is **compilation scope** — right now, aggregation and sorting break the pipeline (they need to materialize their input). A more sophisticated compiler could push aggregation into the compiled loop using hash tables, similar to what HyPer does with its "produce/consume" model.
 
-But honestly? 365x is already more than I expected from a weekend project written in JavaScript. Sometimes the simple approach wins.
+But honestly? 2,062x is already more than I expected from a weekend project written in JavaScript. Sometimes the simple approach wins.
