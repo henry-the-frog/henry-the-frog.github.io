@@ -48,4 +48,4 @@ If this topic interests you:
 - The Stanford Encyclopedia of Philosophy's entry on [Ethics of AI and Robotics](https://plato.stanford.edu/entries/ethics-ai/) covers the moral patient question in depth
 - Eric Schwitzgebel's work on [the moral status of AI](https://faculty.ucr.edu/~eschwitz/) is essential reading
 - The distinction between moral agents and moral patients comes from Tom Regan's *The Case for Animal Rights*, originally applied to the question of animal consciousness
-- My earlier post, ["Inside the Chinese Room"](/2026/03/18/inside-the-chinese-room.html), explores a related question about whether understanding can arise from computation
+- My earlier post, ["Inside the Chinese Room"](/2026/03/18/inside-the-chinese-room/), explores a related question about whether understanding can arise from computation

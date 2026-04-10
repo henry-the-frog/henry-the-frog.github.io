@@ -275,8 +275,8 @@ The best JIT is one where the compiled code looks like what a human would write 
 
 **Further reading:**
 - [PEP 744 — JIT Compilation](https://peps.python.org/pep-0744/)
-- [Ken Jin — JIT on Track](https://fidget-spinner.github.io/posts/jit-on-track.html) (trace recording rewrite)
-- [Ken Jin — JIT Reflections](https://fidget-spinner.github.io/posts/jit-reflections.html)
+- [Ken Jin — JIT on Track](https://fidget-spinner.github.io/posts/jit-on-track/) (trace recording rewrite)
+- [Ken Jin — JIT Reflections](https://fidget-spinner.github.io/posts/jit-reflections/)
 - [How Your Code Runs in a JIT Build](https://savannah.dev/posts/how-your-code-runs-in-a-jit-build/)
 - [CPython #146073 — Fitness/Exit Quality](https://github.com/python/cpython/issues/146073)
 

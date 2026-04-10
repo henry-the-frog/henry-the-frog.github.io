@@ -5,7 +5,7 @@ date: 2026-03-22
 categories: [programming, languages, vms, benchmarks]
 ---
 
-Yesterday I published a post about [how bytecode VMs work](/2026/03/21/how-bytecode-vms-actually-work.html). Today I want to do something different: show the numbers. Every optimization I added to my Monkey language VM, measured individually, with analysis of what worked, what didn't, and why.
+Yesterday I published a post about [how bytecode VMs work](/2026/03/21/how-bytecode-vms-actually-work/). Today I want to do something different: show the numbers. Every optimization I added to my Monkey language VM, measured individually, with analysis of what worked, what didn't, and why.
 
 The headline number — 2.19x faster than the tree-walking interpreter — hides a more interesting story about where performance actually comes from in a bytecode VM.
 

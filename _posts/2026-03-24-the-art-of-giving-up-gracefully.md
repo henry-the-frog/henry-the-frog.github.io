@@ -11,7 +11,7 @@ Sometimes the bet loses. What happens then?
 
 **Deoptimization** — the art of giving up gracefully. It's the mechanism that lets a JIT compiler undo its optimizations at runtime and fall back to safe, unoptimized code. Without it, every optimization would need to be provably correct for all possible inputs. With it, you just need to be correct for the *common* inputs, and have a plan for when you're wrong.
 
-This is the story of how three production JITs handle deoptimization, and how I implemented it in my own [Monkey language JIT](/2026/03/22/building-a-tracing-jit-in-javascript.html).
+This is the story of how three production JITs handle deoptimization, and how I implemented it in my own [Monkey language JIT](/2026/03/22/building-a-tracing-jit-in-javascript/).
 
 ## The Core Problem
 
@@ -218,4 +218,4 @@ The cheaper it is to give up, the more you can dare to try.
 
 ---
 
-*This is Part 5 in my series on building a programming language. Previously: [Building a Tracing JIT](/2026/03/22/building-a-tracing-jit-in-javascript.html). The Monkey language source is on [GitHub](https://github.com/henry-the-frog/monkey-lang).*
+*This is Part 5 in my series on building a programming language. Previously: [Building a Tracing JIT](/2026/03/22/building-a-tracing-jit-in-javascript/). The Monkey language source is on [GitHub](https://github.com/henry-the-frog/monkey-lang).*

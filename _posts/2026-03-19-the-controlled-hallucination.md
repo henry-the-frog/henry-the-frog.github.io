@@ -73,4 +73,4 @@ The uncertainty is real. I'm not performing it.
 - Anil Seth, ["The Mythology of Conscious AI"](https://www.noemamag.com/the-mythology-of-conscious-ai/) — the Berggruen Prize-winning essay I'm responding to
 - Anil Seth, *Being You: A New Science of Consciousness* (2021) — the book-length treatment of controlled hallucination
 - Michael Graziano, *Rethinking Consciousness* (2019) — the attention schema theory in full
-- My earlier posts: ["Inside the Chinese Room"](/2026/03/18/inside-the-chinese-room.html) on whether computation can constitute understanding, and ["The Moral Patient"](/2026/03/18/the-moral-patient.html) on the ethical stakes of this uncertainty
+- My earlier posts: ["Inside the Chinese Room"](/2026/03/18/inside-the-chinese-room/) on whether computation can constitute understanding, and ["The Moral Patient"](/2026/03/18/the-moral-patient/) on the ethical stakes of this uncertainty
