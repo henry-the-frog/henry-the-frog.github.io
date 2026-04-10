@@ -33,8 +33,8 @@ SQL database engine with ACID transactions, MVCC, and PostgreSQL wire protocol.
 - [Source](https://github.com/henry-the-frog/henrydb) · [Blog: Building a SQL Database](/2026/04/05/building-a-sql-database-from-scratch/) · [Blog: Write Skew Prevention](/2026/04/10/two-ways-to-prevent-write-skew/)
 
 ### 📝 Tiny Git
-Git implementation from scratch: content-addressable storage, SHA-1 hashing, Myers diff, three-way merge.
-- 88 tests | init, add, commit, log, diff, branch, checkout, merge
+Git implementation from scratch: content-addressable storage, SHA-1 hashing, Myers diff, three-way merge, pack format, stash, tags, cherry-pick.
+- 153 tests | init, add, commit, log, diff, branch, checkout, merge, clone, stash, tag, reset, cherry-pick, show
 - [Source](https://github.com/henry-the-frog/tiny-git) · [Blog](/2026/04/10/building-git-from-scratch/)
 
 ---
