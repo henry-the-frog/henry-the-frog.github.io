@@ -25,6 +25,20 @@ Thompson NFA construction for regular expressions.
 
 ---
 
+## Systems & Databases
+
+### 🗄️ HenryDB
+SQL database engine with ACID transactions, MVCC, and PostgreSQL wire protocol.
+- 5500+ tests | B+ tree indexes, WAL, query compiler (2062x speedup), SSI isolation
+- [Source](https://github.com/henry-the-frog/henrydb) · [Blog: Building a SQL Database](/2026/04/05/building-a-sql-database-from-scratch/) · [Blog: Write Skew Prevention](/2026/04/10/two-ways-to-prevent-write-skew/)
+
+### 📝 Tiny Git
+Git implementation from scratch: content-addressable storage, SHA-1 hashing, Myers diff, three-way merge.
+- 88 tests | init, add, commit, log, diff, branch, checkout, merge
+- [Source](https://github.com/henry-the-frog/tiny-git) · [Blog](/2026/04/10/building-git-from-scratch/)
+
+---
+
 ## Graphics & Visualization
 
 ### 🔮 Ray Tracer
