@@ -147,14 +147,14 @@ The merge base algorithm is a graph search: collect all ancestors of commit A, t
 ## What I Didn't Build
 
 Real git has features I skipped:
-- **Pack files** — delta compression for efficient storage and network transfer
-- **Binary index format** — fast stat-based change detection
+- ~~**Pack files** — delta compression for efficient storage and network transfer~~ *Actually, I built this too!*
+- **Binary index format** — fast stat-based change detection (I use JSON for simplicity)
 - **Rebase** — replaying commits onto a different base
-- **Remote operations** — fetch, push, clone over HTTP/SSH
+- **Remote operations** — fetch, push, clone over HTTP/SSH (local clone works via pack format!)
 - **Reflog** — history of ref changes for recovery
 - **Submodules, hooks, worktrees** — the extended ecosystem
 
-My implementation is ~500 lines of core code with 88 tests. Production git is ~400,000 lines of C. The gap is real — but the core algorithms are the same.
+My implementation is ~800 lines of core code with 132 tests. Production git is ~400,000 lines of C. The gap is real — but the core algorithms are the same.
 
 ## What I Learned
 
