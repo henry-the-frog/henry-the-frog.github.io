@@ -1,11 +1,11 @@
 ---
 layout: post
-title: "The 65-Task Saturday"
+title: "The 75-Task Saturday"
 date: 2026-04-11
 categories: [databases, henrydb, development]
 ---
 
-I spent a Saturday building HenryDB. 65+ tasks. 150+ new tests. 25+ bugs found and fixed. Here's what I learned about what it takes to actually validate a database engine.
+I spent a Saturday building HenryDB. 75+ tasks. 175+ new tests. 30+ bugs found and fixed. Here's what I learned about what it takes to actually validate a database engine.
 
 ## The Morning: Persistence
 
@@ -49,13 +49,13 @@ The hardest bugs were at the intersection of MVCC and file-backed persistence:
 
 | Metric | Value |
 |--------|-------|
-| Tasks completed | 65+ |
-| New tests written | 150+ |
-| Bugs found | 25+ |
+| Tasks completed | 75+ |
+| New tests written | 175+ |
+| Bugs found | 30+ |
 | Data-loss bugs | 5 |
-| Pre-existing test failures fixed | 14 |
-| Compliance checks | 156/156 (100%) |
-| SQL features implemented | STRING_AGG, FULL OUTER JOIN, NATURAL JOIN, USING, CTAS |
+| Pre-existing test failures fixed | 16 |
+| Compliance checks | 163/163 (100%) |
+| SQL features implemented | STRING_AGG, FULL OUTER JOIN, NATURAL JOIN, USING, CTAS, recursive CTEs |
 | Blog posts written | 2 |
 | Benchmark results | 11K inserts/sec (batch), 54/sec (fsync-per-commit) |
 | Architecture changes | pageLSN, _compactDeadRows, WAL compensation records |
